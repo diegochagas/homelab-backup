@@ -7,4 +7,4 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/config.sh"
 
 echo "Restore workflow is not implemented yet."
-echo "Backup destination: $BACKUP_DEST_DIR"
+echo "Local backup path: $LOCAL_BACKUP"
