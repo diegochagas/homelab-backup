@@ -1,10 +1,11 @@
 # Runtime files
 logs/*.log
-config/config.env
+backups/*
+!backups/.gitkeep
+!logs/.gitkeep
 
 # OS/editor files
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
-
