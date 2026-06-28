@@ -38,3 +38,5 @@ IMMICH_DATABASE="$REMOTE_APPDATA/immich/pgdata"
 ########################################
 
 LOG_DIR="./logs"
+
+DRY_RUN=true

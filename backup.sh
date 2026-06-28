@@ -58,10 +58,6 @@ test_ssh_connection() {
         echo "✅ Connected to ZimaOS"
     else
         echo "❌ Could not connect to ZimaOS"
-        echo
-        echo "Try connecting manually:"
-        echo
-        echo "ssh $REMOTE_USER@$REMOTE_HOST"
         exit 1
     fi
 }
@@ -75,17 +71,97 @@ create_backup_directory() {
 }
 
 ########################################
+# Prints a section header.
+#
+# Arguments:
+#   $1 - Section title
+########################################
+print_section() {
+  echo
+  echo "========================================"
+  echo "$1"
+  echo "========================================"
+}
+
+########################################
+# Synchronizes a directory from the
+# remote server to the local backup.
+#
+# Arguments:
+#   $1 - Remote source
+#   $2 - Local destination
+########################################
+backup_directory() {
+    local source="$1"
+    local destination="$2"
+
+    local options=(-avh --delete)
+
+    if [[ "$DRY_RUN" == true ]]; then
+        options+=(-n)
+    fi
+
+    rsync "${options[@]}" "$source" "$destination"
+}
+
+########################################
+# Backs up the Jellyfin media library and
+# configuration from the ZimaOS server.
+########################################
+backup_jellyfin() {
+    mkdir -p "$LOCAL_BACKUP/jellyfin"
+    mkdir -p "$LOCAL_BACKUP/appdata/jellyfin"
+
+    print_section "Backing up Jellyfin"
+
+    local remote="$REMOTE_USER@$REMOTE_HOST"
+
+    echo "• Media..."
+
+    if backup_directory \
+        "$remote:$JELLYFIN_MEDIA/" \
+        "$LOCAL_BACKUP/jellyfin/"
+    then
+        echo "✅ Jellyfin media OK"
+    else
+        echo "❌ Jellyfin media failed"
+        exit 1
+    fi
+
+    echo "• Configuration..."
+
+    if backup_directory \
+        "$remote:$JELLYFIN_CONFIG/" \
+        "$LOCAL_BACKUP/appdata/jellyfin/"
+    then
+        echo "✅ Jellyfin configuration OK"
+    else
+        echo "❌ Jellyfin configuration failed"
+        exit 1
+    fi
+}
+
+########################################
 # Main
 ########################################
 
-print_header
+main() {
+  print_header
 
-check_dependencies
+  check_dependencies
 
-test_ssh_connection
+  test_ssh_connection
 
-create_backup_directory
+  create_backup_directory
 
-echo
-echo "🎉 Ready to start backups!"
-echo
+  backup_jellyfin
+
+  # backup_immich
+  # backup_nextcloud
+
+  echo
+  echo "🎉 Backup completed!"
+  echo
+}
+
+main
