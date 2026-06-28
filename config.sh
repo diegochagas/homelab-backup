@@ -19,7 +19,9 @@ REMOTE_APPDATA="/DATA/AppData"
 # Local backup
 ########################################
 
-LOCAL_BACKUP="/mnt/data/ZimaOS"
+LOCAL_BACKUP="/mnt/backup"
+LOCAL_MEDIA="$LOCAL_BACKUP/media"
+LOCAL_APPDATA="$LOCAL_BACKUP/appdata"
 
 ########################################
 # Services
@@ -31,6 +33,8 @@ JELLYFIN_CONFIG="$REMOTE_APPDATA/jellyfin/config"
 IMMICH_MEDIA="$REMOTE_MEDIA/immich"
 IMMICH_DATABASE="$REMOTE_APPDATA/immich/pgdata"
 
+VAULTWARDEN_DATA="$REMOTE_APPDATA/vaultwarden/data"
+
 # NEXTCLOUD_DATA="$REMOTE_MEDIA/nextcloud"
 
 ########################################
@@ -38,5 +42,3 @@ IMMICH_DATABASE="$REMOTE_APPDATA/immich/pgdata"
 ########################################
 
 LOG_DIR="./logs"
-
-DRY_RUN=true

@@ -8,7 +8,6 @@ set -Eeuo pipefail
 # Main entry point.
 ########################################
 
-readonly START_TIME=$(date +%s)
 
 # Get the directory where this script is located
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,11 +15,16 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Load configuration
 source "$SCRIPT_DIR/config.sh"
 
-readonly REMOTE="$REMOTE_USER@$REMOTE_HOST"
-
 readonly VERSION="0.1.0"
+readonly REMOTE="$REMOTE_USER@$REMOTE_HOST"
+readonly START_TIME=$(date +%s)
+
+########################################
+# Runtime options
+########################################
 
 SERVICE="all"
+DRY_RUN=false
 
 ########################################
 # Functions
@@ -40,8 +44,46 @@ print_header() {
     echo "=========================================="
     echo "        Homelab Backup v$VERSION"
     echo "=========================================="
-    echo "Mode: $([[ "$DRY_RUN" == true ]] && echo "Dry Run" || echo "Backup")"
+    echo "Mode: $([[ "$DRY_RUN" == true ]] && echo "Simulation" || echo "Backup")"
     echo
+}
+
+########################################
+# Prints the help message.
+########################################
+print_help() {
+    cat << EOF
+Homelab Backup v$VERSION
+
+Usage:
+    ./backup.sh [options]
+
+Options:
+    --service <name>    Backup only one service.
+    --dry-run           Simulate the backup.
+    --help              Show help.
+    --version           Show version.
+
+Available services:
+    all
+    jellyfin
+    immich
+    vaultwarden
+
+Examples:
+    ./backup.sh
+
+    ./backup.sh --service jellyfin
+
+    ./backup.sh --service immich
+EOF
+}
+
+########################################
+# Prints the current version.
+########################################
+print_version() {
+    echo "$VERSION"
 }
 
 check_dependencies() {
@@ -109,17 +151,29 @@ parse_arguments() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --service)
-                if [[ $# -lt 2 ]]; then
-                    echo "❌ Missing service name."
-                    exit 1
-                fi
-
                 SERVICE="$2"
                 shift 2
                 ;;
 
+            --dry-run)
+                DRY_RUN=true
+                shift
+                ;;
+
+            --help)
+                print_help
+                exit 0
+                ;;
+
+            --version)
+                echo "$VERSION"
+                exit 0
+                ;;
+
             *)
                 echo "❌ Unknown argument: $1"
+                echo
+                echo "Run './backup.sh --help' for usage information."
                 exit 1
                 ;;
         esac
@@ -163,35 +217,53 @@ sync_directory() {
 backup_jellyfin() {
     print_section "Backing up Jellyfin"
 
-    mkdir -p "$LOCAL_BACKUP/jellyfin"
-    mkdir -p "$LOCAL_BACKUP/appdata/jellyfin"
+    mkdir -p "$LOCAL_MEDIA/jellyfin"
+    mkdir -p "$LOCAL_APPDATA/jellyfin"
 
     sync_directory \
         "Media" \
         "$REMOTE:$JELLYFIN_MEDIA/" \
-        "$LOCAL_BACKUP/jellyfin/" || return 1
+        "$LOCAL_MEDIA/jellyfin/" || return 1
 
     sync_directory \
         "Configuration" \
         "$REMOTE:$JELLYFIN_CONFIG/" \
-        "$LOCAL_BACKUP/appdata/jellyfin/" || return 1
+        "$LOCAL_APPDATA/jellyfin/" || return 1
 }
 
+########################################
+# Backs up the Immich data and configuration
+# from the ZimaOS server.
+########################################
 backup_immich() {
     print_section "Backing up Immich"
 
-    mkdir -p "$LOCAL_BACKUP/immich"
-    mkdir -p "$LOCAL_BACKUP/appdata/immich"
+    mkdir -p "$LOCAL_MEDIA/immich"
+    mkdir -p "$LOCAL_APPDATA/immich"
 
     sync_directory \
         "Photos" \
         "$REMOTE:$IMMICH_MEDIA/" \
-        "$LOCAL_BACKUP/immich/" || return 1
+        "$LOCAL_MEDIA/immich/" || return 1
 
     sync_directory \
         "Database" \
         "$REMOTE:$IMMICH_DATABASE/" \
-        "$LOCAL_BACKUP/appdata/immich/" || return 1
+        "$LOCAL_APPDATA/immich/" || return 1
+}
+
+########################################
+# Backs up the Vaultwarden data.
+########################################
+backup_vaultwarden() {
+    print_section "Backing up Vaultwarden"
+
+    mkdir -p "$LOCAL_APPDATA/vaultwarden"
+
+    sync_directory \
+        "Data" \
+        "$REMOTE:$VAULTWARDEN_DATA/" \
+        "$LOCAL_APPDATA/vaultwarden/" || return 1
 }
 
 ########################################
@@ -236,6 +308,7 @@ main() {
         all)
             backup_jellyfin || exit 1
             backup_immich || exit 1
+            backup_vaultwarden || exit 1
             ;;
 
         jellyfin)
@@ -246,6 +319,9 @@ main() {
             backup_immich || exit 1
             ;;
 
+        vaultwarden)
+            backup_vaultwarden || exit 1
+            ;;
         *)
             echo "❌ Unknown service: $SERVICE"
             echo
@@ -253,6 +329,7 @@ main() {
             echo "  all"
             echo "  jellyfin"
             echo "  immich"
+            echo "  vaultwarden"
             exit 1
             ;;
     esac
