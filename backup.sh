@@ -172,6 +172,7 @@ Available services:
     all
     jellyfin
     immich
+    nextcloud
     vaultwarden
 
 Examples:
@@ -353,6 +354,10 @@ check_disk_space() {
             required=$((required + $(get_remote_size_bytes "$IMMICH_DATABASE")))
             ;;
 
+        nextcloud)
+            required=0
+            ;;
+
         vaultwarden)
             required=$((required + $(get_remote_size_bytes "$VAULTWARDEN_DATA")))
             ;;
@@ -420,6 +425,17 @@ sync_directory() {
         print_info "Synchronizing..."
     fi
 
+    # Jellyfin's ASP.NET Core Data Protection keys are intentionally
+    # stored with permission 600 and are not readable by the backup user.
+    #
+    # They are automatically regenerated if missing. Excluding them
+    # avoids requiring elevated privileges for the backup process.
+    if [[ "$service" == "jellyfin" ]]; then
+        options+=(
+            --exclude=".aspnet/DataProtection-Keys/"
+        )
+    fi
+
     if rsync "${options[@]}" "$source" "$destination"; then
         print_field "  Status:" "✅ OK"
         SUMMARY+=("$service|$name|$size|✅ OK")
@@ -445,14 +461,14 @@ backup_jellyfin() {
     mkdir -p "$LOCAL_APPDATA/jellyfin"
 
     sync_directory \
-        "Jellyfin" \
+        "jellyfin" \
         "Media" \
         "$JELLYFIN_MEDIA" \
         "$REMOTE:$JELLYFIN_MEDIA/" \
         "$LOCAL_MEDIA/jellyfin/" || return 1
 
     sync_directory \
-        "Jellyfin" \
+        "jellyfin" \
         "Configuration" \
         "$JELLYFIN_CONFIG" \
         "$REMOTE:$JELLYFIN_CONFIG/" \
@@ -478,14 +494,14 @@ backup_immich() {
     mkdir -p "$LOCAL_APPDATA/immich"
 
     sync_directory \
-        "Immich" \
+        "immich" \
         "Photos" \
         "$IMMICH_MEDIA" \
         "$REMOTE:$IMMICH_MEDIA/" \
         "$LOCAL_MEDIA/immich/" || return 1
 
     sync_directory \
-        "Immich" \
+        "immich" \
         "Database" \
         "$IMMICH_DATABASE" \
         "$REMOTE:$IMMICH_DATABASE/" \
@@ -509,7 +525,7 @@ backup_vaultwarden() {
     mkdir -p "$LOCAL_APPDATA/vaultwarden"
 
     sync_directory \
-        "Vaultwarden" \
+        "vaultwarden" \
         "Data" \
         "$VAULTWARDEN_DATA" \
         "$REMOTE:$VAULTWARDEN_DATA/" \
@@ -523,21 +539,24 @@ backup_vaultwarden() {
 }
 
 ########################################
-# TODO
-#
-# Nextcloud files are already synchronized
-# to this machine through the Nextcloud
-# Desktop client.
-#
-# At the moment, backing them up again
-# would only duplicate ~190 GB of data.
-#
-# If the server ever stores unique data
-# (database, configuration, apps,
-# certificates, etc.), implement:
-#
-# backup_nextcloud()
+# Records the Nextcloud backup status.
 ########################################
+# backup_nextcloud() {
+#     print_section "Backing up Nextcloud"
+
+#     local start_time=$(date +%s)
+
+#     print_info "📂 Files"
+#     print_field "   Size:" "Already synchronized locally"
+#     print_field "  Status:" "⏭️ Skipped"
+#     SUMMARY+=("Nextcloud|Files|Already synchronized locally|⏭️ Skipped")
+
+#     local end_time=$(date +%s)
+#     local elapsed=$((end_time - start_time))
+
+#     echo
+#     print_field "Completed in:" "$(format_time "$elapsed")"
+# }
 
 ########################################
 # Main
@@ -579,9 +598,9 @@ print_summary() {
     local elapsed="$1"
     print_section "Summary"
 
-    print_service_summary "Jellyfin"
-    print_service_summary "Immich"
-    print_service_summary "Vaultwarden"
+    print_service_summary "jellyfin"
+    print_service_summary "immich"
+    print_service_summary "vaultwarden"
 
     echo
 
@@ -618,6 +637,7 @@ main() {
         all)
             backup_jellyfin || exit 1
             backup_immich || exit 1
+            # backup_nextcloud || exit 1
             backup_vaultwarden || exit 1
             ;;
 
@@ -629,6 +649,10 @@ main() {
             backup_immich || exit 1
             ;;
 
+        # nextcloud)
+        #     backup_nextcloud || exit 1
+        #     ;;
+
         vaultwarden)
             backup_vaultwarden || exit 1
             ;;
@@ -639,6 +663,7 @@ main() {
             print_info "  all"
             print_info "  jellyfin"
             print_info "  immich"
+            print_info "  nextcloud"
             print_info "  vaultwarden"
             exit 1
             ;;
