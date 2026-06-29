@@ -172,7 +172,6 @@ Available services:
     all
     jellyfin
     immich
-    nextcloud
     vaultwarden
 
 Examples:
