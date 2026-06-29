@@ -402,15 +402,25 @@ sync_directory() {
         -a
         --human-readable
         --delete
-        --info=progress2
-        --stats
     )
 
     if [[ "$DRY_RUN" == true ]]; then
-        options+=(-n)
+        options+=(
+            -n
+            --stats
+        )
+    else
+        options+=(
+            --info=progress2,name0
+        )
     fi
 
-    if rsync "${options[@]}" "$source" "$destination" >>"$LOG_FILE" 2>&1; then
+    if [[ "$DRY_RUN" == false ]]; then
+        print_info
+        print_info "Synchronizing..."
+    fi
+
+    if rsync "${options[@]}" "$source" "$destination"; then
         print_field "  Status:" "✅ OK"
         SUMMARY+=("$service|$name|$size|✅ OK")
     else
