@@ -4,22 +4,22 @@
 # ZimaOS
 ########################################
 
-REMOTE_HOST="192.168.15.8"
-REMOTE_USER="diegochagas"
+REMOTE_HOST="192.168.x.x"
+REMOTE_USER="your-user"
 SSH_PORT=22
 
 ########################################
 # Remote paths
 ########################################
 
-REMOTE_MEDIA="/media/sdb1-ata-WDC_WD10EZEX-75"
+REMOTE_MEDIA="/media/your-storage"
 REMOTE_APPDATA="/DATA/AppData"
 
 ########################################
 # Local backup
 ########################################
 
-LOCAL_BACKUP="/mnt/backup"
+LOCAL_BACKUP="/mnt/data/backup"
 LOCAL_MEDIA="$LOCAL_BACKUP/media"
 LOCAL_APPDATA="$LOCAL_BACKUP/appdata"
 
@@ -34,8 +34,6 @@ IMMICH_MEDIA="$REMOTE_MEDIA/immich"
 IMMICH_DATABASE="$REMOTE_APPDATA/immich/pgdata"
 
 VAULTWARDEN_DATA="$REMOTE_APPDATA/vaultwarden/data"
-
-# NEXTCLOUD_DATA="$REMOTE_MEDIA/nextcloud"
 
 ########################################
 # Logging

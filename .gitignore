@@ -1,11 +1,17 @@
-# Runtime files
-logs/*.log
-backups/*
-!backups/.gitkeep
-!logs/.gitkeep
+# Local configuration
+config.sh
 
-# OS/editor files
+# Logs
+logs/
+
+# macOS
 .DS_Store
-Thumbs.db
-.idea/
+
+# Linux
+*~
+
+# VSCode
 .vscode/
+
+# JetBrains
+.idea/
