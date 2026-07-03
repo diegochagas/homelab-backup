@@ -9,7 +9,6 @@ trap 'handle_error $? $LINENO "$BASH_COMMAND"' ERR
 # Main entry point.
 ########################################
 
-
 # Get the directory where this script is located
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -170,16 +169,18 @@ Options:
 
 Available services:
     all
-    jellyfin
     immich
     vaultwarden
+    jellyfin
 
 Examples:
     ./backup.sh
 
-    ./backup.sh --service jellyfin
-
     ./backup.sh --service immich
+
+    ./backup.sh --service vaultwarden
+
+    ./backup.sh --service jellyfin
 EOF
 }
 
@@ -275,7 +276,7 @@ parse_arguments() {
                 ;;
 
             --version)
-                echo "$VERSION"
+                print_version
                 exit 0
                 ;;
 
@@ -336,11 +337,11 @@ check_disk_space() {
 
     case "$SERVICE" in
         all)
-            required=$((required + $(get_remote_size_bytes "$JELLYFIN_MEDIA")))
-            required=$((required + $(get_remote_size_bytes "$JELLYFIN_CONFIG")))
             required=$((required + $(get_remote_size_bytes "$IMMICH_MEDIA")))
             required=$((required + $(get_remote_size_bytes "$IMMICH_DATABASE")))
             required=$((required + $(get_remote_size_bytes "$VAULTWARDEN_DATA")))
+            required=$((required + $(get_remote_size_bytes "$JELLYFIN_CONFIG")))
+            # required=$((required + $(get_remote_size_bytes "$JELLYFIN_MEDIA")))
             ;;
 
         jellyfin)
@@ -461,17 +462,17 @@ backup_jellyfin() {
 
     sync_directory \
         "jellyfin" \
-        "Media" \
-        "$JELLYFIN_MEDIA" \
-        "$REMOTE:$JELLYFIN_MEDIA/" \
-        "$LOCAL_MEDIA/jellyfin/" || return 1
-
-    sync_directory \
-        "jellyfin" \
         "Configuration" \
         "$JELLYFIN_CONFIG" \
         "$REMOTE:$JELLYFIN_CONFIG/" \
         "$LOCAL_APPDATA/jellyfin/" || return 1
+
+    # sync_directory \
+    #     "jellyfin" \
+    #     "Media" \
+    #     "$JELLYFIN_MEDIA" \
+    #     "$REMOTE:$JELLYFIN_MEDIA/" \
+    #     "$LOCAL_MEDIA/jellyfin/" || return 1
 
     local end_time=$(date +%s)
     local elapsed=$((end_time - start_time))
@@ -540,22 +541,22 @@ backup_vaultwarden() {
 ########################################
 # Records the Nextcloud backup status.
 ########################################
-# backup_nextcloud() {
-#     print_section "Backing up Nextcloud"
+backup_nextcloud() {
+    print_section "Backing up Nextcloud"
 
-#     local start_time=$(date +%s)
+    local start_time=$(date +%s)
 
-#     print_info "📂 Files"
-#     print_field "   Size:" "Already synchronized locally"
-#     print_field "  Status:" "⏭️ Skipped"
-#     SUMMARY+=("Nextcloud|Files|Already synchronized locally|⏭️ Skipped")
+    print_info "📂 Files"
+    print_field "   Size:" "Already synchronized locally"
+    print_field "  Status:" "⏭️ Skipped"
+    SUMMARY+=("Nextcloud|Files|Already synchronized locally|⏭️ Skipped")
 
-#     local end_time=$(date +%s)
-#     local elapsed=$((end_time - start_time))
+    local end_time=$(date +%s)
+    local elapsed=$((end_time - start_time))
 
-#     echo
-#     print_field "Completed in:" "$(format_time "$elapsed")"
-# }
+    echo
+    print_field "Completed in:" "$(format_time "$elapsed")"
+}
 
 ########################################
 # Main
@@ -597,9 +598,9 @@ print_summary() {
     local elapsed="$1"
     print_section "Summary"
 
-    print_service_summary "jellyfin"
     print_service_summary "immich"
     print_service_summary "vaultwarden"
+    print_service_summary "jellyfin"
 
     echo
 
@@ -621,6 +622,7 @@ initialize() {
 
     check_disk_space
 }
+
 main() {
     parse_arguments "$@"
 
@@ -634,10 +636,10 @@ main() {
 
     case "$SERVICE" in
         all)
-            backup_jellyfin || exit 1
             backup_immich || exit 1
-            # backup_nextcloud || exit 1
             backup_vaultwarden || exit 1
+            backup_jellyfin || exit 1
+            # backup_nextcloud || exit 1
             ;;
 
         jellyfin)
@@ -648,9 +650,9 @@ main() {
             backup_immich || exit 1
             ;;
 
-        # nextcloud)
-        #     backup_nextcloud || exit 1
-        #     ;;
+        nextcloud)
+            backup_nextcloud || exit 1
+            ;;
 
         vaultwarden)
             backup_vaultwarden || exit 1
@@ -660,10 +662,10 @@ main() {
             print_info
             print_info "Available services:"
             print_info "  all"
-            print_info "  jellyfin"
             print_info "  immich"
-            print_info "  nextcloud"
             print_info "  vaultwarden"
+            print_info "  jellyfin"
+            # print_info "  nextcloud"
             exit 1
             ;;
     esac
