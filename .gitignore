@@ -1,5 +1,6 @@
 # Local configuration
 config.sh
+profiles.conf
 
 # Logs
 logs/

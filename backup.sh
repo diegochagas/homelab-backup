@@ -15,7 +15,7 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Load configuration
 source "$SCRIPT_DIR/config.sh"
 
-readonly VERSION="1.0.0"
+readonly VERSION="2.0.0"
 readonly REMOTE="$REMOTE_USER@$REMOTE_HOST"
 readonly START_TIME=$(date +%s)
 
@@ -23,9 +23,12 @@ readonly START_TIME=$(date +%s)
 # Runtime options
 ########################################
 
-SERVICE="all"
+TARGET="all"
 DRY_RUN=false
 declare LOG_FILE=""
+
+# Folders selected for this run
+declare -a SELECTED=()
 
 declare -a SUMMARY=()
 
@@ -65,7 +68,7 @@ write_log_header() {
         echo "Date:        $(date '+%Y-%m-%d %H:%M:%S')"
         echo "Host:        $(hostname)"
         echo "Mode:        $([[ "$DRY_RUN" == true ]] && echo "Simulation" || echo "Backup")"
-        echo "Service:     $SERVICE"
+        echo "Folder:      $TARGET"
         echo "Destination: $LOCAL_BACKUP"
 
         echo
@@ -162,25 +165,19 @@ Usage:
     ./backup.sh [options]
 
 Options:
-    --service <name>    Backup only one service.
+    --folder <name>     Backup only one folder.
     --dry-run           Simulate the backup.
     --help              Show help.
     --version           Show version.
 
-Available services:
+Available folders:
     all
-    immich
-    vaultwarden
-    jellyfin
+$(printf '    %s\n' "${FOLDERS[@]}")
 
 Examples:
     ./backup.sh
 
-    ./backup.sh --service immich
-
-    ./backup.sh --service vaultwarden
-
-    ./backup.sh --service jellyfin
+$(printf '    ./backup.sh --folder %s\n\n' "${FOLDERS[@]}")
 EOF
 }
 
@@ -228,6 +225,28 @@ test_ssh_connection() {
     fi
 }
 
+########################################
+# Verifies that the selected remote
+# folders exist before starting.
+########################################
+check_remote_folders() {
+    print_info
+    print_info "Checking remote folders..."
+
+    for folder in "${SELECTED[@]}"; do
+        if ! ssh \
+            -p "$SSH_PORT" \
+            "$REMOTE" \
+            "[ -d \"$REMOTE_ROOT/$folder\" ]"
+        then
+            print_info "❌ Remote folder not found: $REMOTE_ROOT/$folder"
+            exit 1
+        fi
+    done
+
+    print_info "✅ Remote folders OK"
+}
+
 create_backup_directory() {
     print_info
     print_info "Creating backup directory..."
@@ -252,16 +271,45 @@ print_section() {
 }
 
 ########################################
+# Resolves the --folder argument into
+# the list of folders to back up.
+########################################
+select_folders() {
+    if [[ "$TARGET" == "all" ]]; then
+        SELECTED=("${FOLDERS[@]}")
+        return
+    fi
+
+    for folder in "${FOLDERS[@]}"; do
+        if [[ "${folder,,}" == "${TARGET,,}" ]]; then
+            SELECTED=("$folder")
+            return
+        fi
+    done
+
+    print_info "❌ Unknown folder: $TARGET"
+    print_info
+    print_info "Available folders:"
+    print_info "  all"
+
+    for folder in "${FOLDERS[@]}"; do
+        print_info "  $folder"
+    done
+
+    exit 1
+}
+
+########################################
 # Parses command-line arguments.
 #
 # Options:
-#   --service <name>
+#   --folder <name>
 ########################################
 parse_arguments() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --service)
-                SERVICE="$2"
+            --folder)
+                TARGET="$2"
                 shift 2
                 ;;
 
@@ -335,33 +383,9 @@ check_disk_space() {
 
     local required=0
 
-    case "$SERVICE" in
-        all)
-            required=$((required + $(get_remote_size_bytes "$IMMICH_MEDIA")))
-            required=$((required + $(get_remote_size_bytes "$IMMICH_DATABASE")))
-            required=$((required + $(get_remote_size_bytes "$VAULTWARDEN_DATA")))
-            required=$((required + $(get_remote_size_bytes "$JELLYFIN_CONFIG")))
-            # required=$((required + $(get_remote_size_bytes "$JELLYFIN_MEDIA")))
-            ;;
-
-        jellyfin)
-            required=$((required + $(get_remote_size_bytes "$JELLYFIN_MEDIA")))
-            required=$((required + $(get_remote_size_bytes "$JELLYFIN_CONFIG")))
-            ;;
-
-        immich)
-            required=$((required + $(get_remote_size_bytes "$IMMICH_MEDIA")))
-            required=$((required + $(get_remote_size_bytes "$IMMICH_DATABASE")))
-            ;;
-
-        nextcloud)
-            required=0
-            ;;
-
-        vaultwarden)
-            required=$((required + $(get_remote_size_bytes "$VAULTWARDEN_DATA")))
-            ;;
-    esac
+    for folder in "${SELECTED[@]}"; do
+        required=$((required + $(get_remote_size_bytes "$REMOTE_ROOT/$folder")))
+    done
 
     local available
     available=$(get_available_space)
@@ -379,34 +403,33 @@ check_disk_space() {
 }
 
 ########################################
-# Synchronizes a directory from the
-# remote server to the local backup.
+# Synchronizes a folder from the remote
+# server to the local backup, showing
+# overall transfer progress.
 #
 # Arguments:
-#   $1 - Service name
-#   $2 - Display name
-#   $3 - Remote path
-#   $4 - Remote source
-#   $5 - Local destination
+#   $1 - Folder name
 ########################################
-sync_directory() {
-    local service="$1"
-    local name="$2"
-    local remote_path="$3"
-    local source="$4"
-    local destination="$5"
+sync_folder() {
+    local folder="$1"
 
-    print_info "📂 $name"
+    local remote_path="$REMOTE_ROOT/$folder"
+    local destination="$LOCAL_BACKUP/$folder"
+
+    print_info "📂 $folder"
 
     local size
     size=$(get_remote_size "$remote_path")
 
     print_field "   Size:" "$size"
 
+    mkdir -p "$destination"
+
     local options=(
         -a
         --human-readable
         --delete
+        --rsync-path="sudo /usr/bin/rsync"
     )
 
     if [[ "$DRY_RUN" == true ]]; then
@@ -418,138 +441,38 @@ sync_directory() {
         options+=(
             --info=progress2,name0
         )
-    fi
 
-    if [[ "$DRY_RUN" == false ]]; then
         print_info
         print_info "Synchronizing..."
     fi
 
-    # Jellyfin's ASP.NET Core Data Protection keys are intentionally
-    # stored with permission 600 and are not readable by the backup user.
-    #
-    # They are automatically regenerated if missing. Excluding them
-    # avoids requiring elevated privileges for the backup process.
-    if [[ "$service" == "jellyfin" ]]; then
-        options+=(
-            --exclude=".aspnet/DataProtection-Keys/"
-        )
-    fi
-
-    if rsync "${options[@]}" "$source" "$destination"; then
+    if rsync "${options[@]}" "$REMOTE:$remote_path/" "$destination/"; then
         print_field "  Status:" "✅ OK"
-        SUMMARY+=("$service|$name|$size|✅ OK")
+        SUMMARY+=("$folder|$size|✅ OK")
     else
         print_field "  Status:" "❌ Failed"
-        SUMMARY+=("$service|$name|$size|❌ Failed")
+        SUMMARY+=("$folder|$size|❌ Failed")
         return 1
     fi
-    
+
     print_info
 }
 
 ########################################
-# Backs up the Jellyfin media library and
-# configuration from the ZimaOS server.
+# Backs up a folder from the ZimaOS
+# server.
+#
+# Arguments:
+#   $1 - Folder name
 ########################################
-backup_jellyfin() {
-    print_section "Backing up Jellyfin"
+backup_folder() {
+    local folder="$1"
+
+    print_section "Backing up $folder"
 
     local start_time=$(date +%s)
 
-    mkdir -p "$LOCAL_MEDIA/jellyfin"
-    mkdir -p "$LOCAL_APPDATA/jellyfin"
-
-    sync_directory \
-        "jellyfin" \
-        "Configuration" \
-        "$JELLYFIN_CONFIG" \
-        "$REMOTE:$JELLYFIN_CONFIG/" \
-        "$LOCAL_APPDATA/jellyfin/" || return 1
-
-    # sync_directory \
-    #     "jellyfin" \
-    #     "Media" \
-    #     "$JELLYFIN_MEDIA" \
-    #     "$REMOTE:$JELLYFIN_MEDIA/" \
-    #     "$LOCAL_MEDIA/jellyfin/" || return 1
-
-    local end_time=$(date +%s)
-    local elapsed=$((end_time - start_time))
-
-    echo
-    print_field "Completed in:" "$(format_time "$elapsed")"
-}
-
-########################################
-# Backs up the Immich data and configuration
-# from the ZimaOS server.
-########################################
-backup_immich() {
-    print_section "Backing up Immich"
-
-    local start_time=$(date +%s)
-
-    mkdir -p "$LOCAL_MEDIA/immich"
-    mkdir -p "$LOCAL_APPDATA/immich"
-
-    sync_directory \
-        "immich" \
-        "Photos" \
-        "$IMMICH_MEDIA" \
-        "$REMOTE:$IMMICH_MEDIA/" \
-        "$LOCAL_MEDIA/immich/" || return 1
-
-    sync_directory \
-        "immich" \
-        "Database" \
-        "$IMMICH_DATABASE" \
-        "$REMOTE:$IMMICH_DATABASE/" \
-        "$LOCAL_APPDATA/immich/" || return 1
-
-    local end_time=$(date +%s)
-    local elapsed=$((end_time - start_time))
-
-    echo
-    print_field "Completed in:" "$(format_time "$elapsed")"
-}
-
-########################################
-# Backs up the Vaultwarden data.
-########################################
-backup_vaultwarden() {
-    print_section "Backing up Vaultwarden"
-
-    local start_time=$(date +%s)
-
-    mkdir -p "$LOCAL_APPDATA/vaultwarden"
-
-    sync_directory \
-        "vaultwarden" \
-        "Data" \
-        "$VAULTWARDEN_DATA" \
-        "$REMOTE:$VAULTWARDEN_DATA/" \
-        "$LOCAL_APPDATA/vaultwarden/" || return 1
-
-    local end_time=$(date +%s)
-    local elapsed=$((end_time - start_time))
-
-    echo
-    print_field "Completed in:" "$(format_time "$elapsed")"
-}
-
-########################################
-# Records the Nextcloud backup status.
-########################################
-backup_nextcloud() {
-    print_section "Backing up Nextcloud"
-
-    local start_time=$(date +%s)
-
-    print_info "📂 Files"
-    print_field "   Size:" "Already synchronized locally"
-    print_field "  Status:" "⏭️ Skipped"
-    SUMMARY+=("Nextcloud|Files|Already synchronized locally|⏭️ Skipped")
+    sync_folder "$folder" || return 1
 
     local end_time=$(date +%s)
     local elapsed=$((end_time - start_time))
@@ -563,44 +486,20 @@ backup_nextcloud() {
 ########################################
 
 ########################################
-# Prints the summary entries for a
-# specific service.
-#
-# Arguments:
-#   $1 - Service name
-########################################
-print_service_summary() {
-    local service="$1"
-
-    local found=false
-
-    for item in "${SUMMARY[@]}"; do
-        IFS="|" read -r item_service name size status <<< "$item"
-
-        if [[ "$item_service" == "$service" ]]; then
-            if [[ "$found" == false ]]; then
-                echo "$service"
-                found=true
-            fi
-
-            echo "  • $name"
-            print_field "    Size:" "$size"
-            print_field "    Status:" "$status"
-            echo
-        fi
-    done
-}
-
-########################################
 # Prints the backup summary.
 ########################################
 print_summary() {
     local elapsed="$1"
     print_section "Summary"
 
-    print_service_summary "immich"
-    print_service_summary "vaultwarden"
-    print_service_summary "jellyfin"
+    for item in "${SUMMARY[@]}"; do
+        IFS="|" read -r name size status <<< "$item"
+
+        print_info "• $name"
+        print_field "    Size:" "$size"
+        print_field "    Status:" "$status"
+        print_info
+    done
 
     echo
 
@@ -618,6 +517,8 @@ initialize() {
 
     test_ssh_connection
 
+    check_remote_folders
+
     create_backup_directory
 
     check_disk_space
@@ -632,43 +533,13 @@ main() {
 
     print_header
 
+    select_folders
+
     initialize
 
-    case "$SERVICE" in
-        all)
-            backup_immich || exit 1
-            backup_vaultwarden || exit 1
-            backup_jellyfin || exit 1
-            # backup_nextcloud || exit 1
-            ;;
-
-        jellyfin)
-            backup_jellyfin || exit 1
-            ;;
-
-        immich)
-            backup_immich || exit 1
-            ;;
-
-        nextcloud)
-            backup_nextcloud || exit 1
-            ;;
-
-        vaultwarden)
-            backup_vaultwarden || exit 1
-            ;;
-        *)
-            print_info "❌ Unknown service: $SERVICE"
-            print_info
-            print_info "Available services:"
-            print_info "  all"
-            print_info "  immich"
-            print_info "  vaultwarden"
-            print_info "  jellyfin"
-            # print_info "  nextcloud"
-            exit 1
-            ;;
-    esac
+    for folder in "${SELECTED[@]}"; do
+        backup_folder "$folder" || exit 1
+    done
 
     local end_time=$(date +%s)
     local elapsed=$((end_time - START_TIME))

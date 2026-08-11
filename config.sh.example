@@ -12,28 +12,38 @@ SSH_PORT=22
 # Remote paths
 ########################################
 
-REMOTE_MEDIA="/media/your-storage"
+# External drive as shown in ZimaOS Files (ZimaOS mounts
+# external drives under /media by label).
+REMOTE_ROOT="/media/YOUR-DRIVE"
+
+# Live application data on the ZimaOS system drive. Only used
+# by restore.sh (--target appdata) to restore backed-up AppData
+# in place, e.g. after a fresh ZimaOS install.
 REMOTE_APPDATA="/DATA/AppData"
+
+# Containers stopped/restarted around a restore.sh --target
+# appdata run, so files aren't restored under an app that's
+# actively writing to them.
+APPS="vaultwarden jellyfin qbittorrent nextcloud immich-server immich-postgres"
 
 ########################################
 # Local backup
 ########################################
 
 LOCAL_BACKUP="/mnt/data/backup"
-LOCAL_MEDIA="$LOCAL_BACKUP/media"
-LOCAL_APPDATA="$LOCAL_BACKUP/appdata"
 
 ########################################
-# Services
+# Folders
+#
+# Each entry is a top-level folder of
+# REMOTE_ROOT that is synchronized in
+# full, no matter what is inside it.
 ########################################
 
-JELLYFIN_MEDIA="$REMOTE_MEDIA/jellyfin"
-JELLYFIN_CONFIG="$REMOTE_APPDATA/jellyfin/config"
-
-IMMICH_MEDIA="$REMOTE_MEDIA/immich"
-IMMICH_DATABASE="$REMOTE_APPDATA/immich/pgdata"
-
-VAULTWARDEN_DATA="$REMOTE_APPDATA/vaultwarden/data"
+FOLDERS=(
+    "Backups"
+    "Gallery"
+)
 
 ########################################
 # Logging

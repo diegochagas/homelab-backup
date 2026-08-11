@@ -2,11 +2,53 @@
 
 ![Bash](https://img.shields.io/badge/Bash-5%2B-green)
 ![License](https://img.shields.io/github/license/diegochagas/homelab-backup)
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Version](https://img.shields.io/badge/version-2.0.0-blue)
 
 A lightweight, modular and extensible Bash backup utility for self-hosted homelabs.
 
-**Homelab Backup** securely synchronizes data from a remote **ZimaOS** server to a local backup drive using **SSH** and **rsync**. It is designed to provide reliable, incremental backups with a clean command-line interface, detailed logging, automatic disk space verification, and centralized error handling.
+**Homelab Backup** covers the full backup chain for a **ZimaOS** server: backing
+up its live app data locally, pulling an offsite copy down to a Linux Mint
+workstation, restoring that copy back after a failure, and mirroring it onto
+cold/offline external drives.
+
+---
+
+## The Backup Chain
+
+```
+┌─────────────────────────┐        ┌──────────────────────────┐
+│  ZimaOS server           │        │  Linux Mint workstation   │
+│                           │        │                            │
+│  /DATA/AppData  ───────┐ │        │                            │
+│         (live app data)│ │        │                            │
+│                         ▼ │        │                            │
+│  zimaos/backup.sh          │        │                            │
+│         │                 │        │                            │
+│         ▼                 │        │                            │
+│  DATA4TB/Backups/AppData   │        │                            │
+│  DATA4TB/Backups           │  SSH   │                            │
+│  DATA4TB/Gallery      ─────┼───────▶│  backup.sh                 │
+│         │                 │  pull  │       │                     │
+│         ▼                 │        │       ▼                     │
+│  BACKUP4TB (full mirror)   │        │  /mnt/data/backup           │
+│                           │        │       │                     │
+│         ▲                 │  SSH   │       │                     │
+│         └─────────────────┼────────┤  restore.sh (DR only)       │
+│                           │  push  │       │                     │
+│                           │        │       ▼                     │
+│                           │        │  mirror-to-external.sh       │
+│                           │        │       │                     │
+│                           │        │       ▼                     │
+│                           │        │  external USB drive          │
+└─────────────────────────┘        └──────────────────────────┘
+```
+
+| Stage | Script | Runs on | Direction | Purpose |
+| ----- | ------ | ------- | --------- | ------- |
+| 1 | `zimaos/backup.sh` | ZimaOS (cron) | `/DATA/AppData` → `DATA4TB`, `DATA4TB` → `BACKUP4TB` | Consistent local copy + local mirror |
+| 2 | `backup.sh` | Linux Mint (systemd timer) | `DATA4TB` → `/mnt/data/backup` | Offsite copy |
+| 3 | `restore.sh` | Linux Mint (manual) | `/mnt/data/backup` → ZimaOS | Disaster recovery |
+| — | `mirror-to-external.sh` | Linux Mint (manual) | local or ZimaOS → external USB drive | Ad-hoc cold/offline copies |
 
 ---
 
@@ -14,10 +56,14 @@ A lightweight, modular and extensible Bash backup utility for self-hosted homela
 
 - ✅ Incremental backups using `rsync`
 - ✅ SSH-based remote synchronization
-- ✅ Backup multiple services independently
-- ✅ Backup all services with a single command
-- ✅ Dry Run mode for safe testing
+- ✅ Live transfer progress
+- ✅ Folder-based backups — everything inside each folder is included
+- ✅ Backup a single folder or all folders with one command
+- ✅ Push-based restore for disaster recovery, with container-safe AppData handling
+- ✅ Profile-based mirroring to external drives, with drive auto-detection and destructive-action confirmation
+- ✅ Dry Run mode for safe testing on every script
 - ✅ Automatic disk space verification
+- ✅ Remote folder validation
 - ✅ Detailed execution logs
 - ✅ Backup summary
 - ✅ Centralized error handling using `trap`
@@ -26,20 +72,16 @@ A lightweight, modular and extensible Bash backup utility for self-hosted homela
 
 ---
 
-## Supported Services
+## Backed-up Folders
 
-| Service                   |   Status   |
-| ------------------------- | :--------: |
-| Jellyfin                  |     ✅     |
-| Immich                    |     ✅     |
-| Vaultwarden               |     ✅     |
-| Nextcloud (Configuration) | 🚧 Planned |
+The backup is **folder-based**: each entry in `FOLDERS` (in `config.sh`) is a top-level folder of the ZimaOS external drive, synchronized in full — no matter what is inside it.
 
-> **Note**
->
-> Nextcloud files are **not** backed up by this project because they are already synchronized to the local machine using the Nextcloud Desktop Client.
->
-> This avoids storing duplicate copies of large datasets while still allowing future backup of server-specific configuration and databases.
+| Folder     | Status |
+| ---------- | :----: |
+| `Backups`  |   ✅   |
+| `Gallery`  |   ✅   |
+
+Adding a new folder to the backup is a one-line change in `config.sh`.
 
 ---
 
@@ -48,8 +90,16 @@ A lightweight, modular and extensible Bash backup utility for self-hosted homela
 ```
 homelab-backup/
 │
-├── backup.sh
+├── backup.sh                  # Stage 2: pull ZimaOS -> Linux Mint
+├── restore.sh                 # Stage 3: push Linux Mint -> ZimaOS (DR)
+├── mirror-to-external.sh      # Ad-hoc: mirror a profile onto an external drive
 ├── config.sh.example
+├── profiles.conf.example
+│
+├── zimaos/
+│   ├── backup.sh               # Stage 1: runs on the ZimaOS server itself
+│   └── config.sh.example
+│
 ├── LICENSE
 ├── README.md
 ├── .gitignore
@@ -61,22 +111,16 @@ homelab-backup/
 
 # Backup Structure
 
-The backup is organized into two main categories:
+The local backup mirrors the top-level folders of the remote drive:
 
 ```
 /mnt/data/backup
 │
-├── media
-│   ├── jellyfin
-│   └── immich
+├── Backups
+│   └── AppData        # mirrors /DATA/AppData on ZimaOS
 │
-└── appdata
-    ├── jellyfin
-    ├── immich
-    └── vaultwarden
+└── Gallery
 ```
-
-This mirrors the remote server while separating user data from application data.
 
 ---
 
@@ -94,6 +138,7 @@ Required commands:
 - rsync
 - du
 - df
+- lsblk *(mirror-to-external.sh only)*
 
 ---
 
@@ -106,6 +151,8 @@ git clone https://github.com/diegochagas/homelab-backup.git
 
 cd homelab-backup
 ```
+
+## Linux Mint side (backup.sh, restore.sh, mirror-to-external.sh)
 
 Create your configuration file:
 
@@ -125,47 +172,64 @@ Adjust the following values:
 REMOTE_HOST
 REMOTE_USER
 
-REMOTE_MEDIA
+REMOTE_ROOT
 REMOTE_APPDATA
+APPS
 
 LOCAL_BACKUP
+
+FOLDERS
 ```
+
+If you plan to use `mirror-to-external.sh`, also create its profiles file:
+
+```bash
+cp profiles.conf.example profiles.conf
+nano profiles.conf
+```
+
+## ZimaOS side (zimaos/backup.sh)
+
+Copy `zimaos/` onto the ZimaOS server (e.g. `scp -r zimaos/ diegochagas@192.168.15.8:~/backup/`), then on the server:
+
+```bash
+cd backup
+cp config.sh.example config.sh
+nano config.sh
+```
+
+Schedule it with cron (or ZimaOS's own Task Scheduler) to run daily before `backup.sh`'s pull.
 
 ---
 
 # Usage
 
-## Backup everything
+## Stage 1 — ZimaOS local backup (on the server)
+
+```bash
+./zimaos/backup.sh
+```
+
+Stops the configured app containers, mirrors `/DATA/AppData` onto the external
+drive, restarts the containers, then mirrors the whole external drive onto a
+second drive. Intended to run via cron on the ZimaOS box itself.
+
+## Stage 2 — Pull to Linux Mint
+
+### Backup everything
 
 ```bash
 ./backup.sh
 ```
 
----
-
-## Backup a single service
-
-### Jellyfin
+### Backup a single folder
 
 ```bash
-./backup.sh --service jellyfin
+./backup.sh --folder Backups
+./backup.sh --folder Gallery
 ```
 
-### Immich
-
-```bash
-./backup.sh --service immich
-```
-
-### Vaultwarden
-
-```bash
-./backup.sh --service vaultwarden
-```
-
----
-
-## Simulate a backup
+### Simulate a backup
 
 Dry Run allows you to verify everything that will happen without copying or deleting any files.
 
@@ -173,21 +237,68 @@ Dry Run allows you to verify everything that will happen without copying or dele
 ./backup.sh --dry-run
 ```
 
-Dry Run can also be combined with a service:
+Dry Run can also be combined with a folder:
 
 ```bash
-./backup.sh --service jellyfin --dry-run
+./backup.sh --folder Gallery --dry-run
 ```
 
----
+## Stage 3 — Restore to ZimaOS (disaster recovery)
+
+Pushes `/mnt/data/backup` back to the ZimaOS server, restoring each folder to
+its respective remote location. Use this after a drive failure or a fresh
+ZimaOS install.
+
+```bash
+# Always dry-run first
+./restore.sh --dry-run
+
+# Restore everything
+./restore.sh
+
+# Restore only the live app data (containers are stopped/restarted around it)
+./restore.sh --target appdata
+
+# Restore only one folder
+./restore.sh --target Gallery
+
+# Exact mirror restore (also removes remote files with no local counterpart)
+./restore.sh --delete
+```
+
+By default `restore.sh` only adds/updates files; pass `--delete` for an exact
+mirror. It always asks for a typed confirmation before touching remote data
+unless `--dry-run` or `--yes` is given.
+
+## Ad-hoc — Mirror to an external drive
+
+Connect an external USB drive to Linux Mint, then:
+
+```bash
+# See what's configured
+./mirror-to-external.sh --list
+
+# Preview
+./mirror-to-external.sh nextcloud --dry-run
+
+# Wipe the connected drive and copy the Nextcloud data onto it
+./mirror-to-external.sh nextcloud
+
+# Wipe the connected drive and copy ZimaOS's Media folder onto it
+./mirror-to-external.sh media
+```
+
+The script auto-detects mounted removable drives (asking you to pick if more
+than one is connected) and always requires you to type the drive's label back
+before erasing anything — there is no way to skip this prompt.
 
 ## Help
 
 ```bash
 ./backup.sh --help
+./restore.sh --help
+./mirror-to-external.sh --help
 ```
-
----
 
 ## Version
 
@@ -201,7 +312,7 @@ Dry Run can also be combined with a service:
 
 ```text
 ==========================================
-        Homelab Backup v1.0.0
+        Homelab Backup v2.0.0
 ==========================================
 Mode: Backup
 
@@ -215,29 +326,32 @@ Checking dependencies...
 Testing SSH connection...
 ✅ Connected to ZimaOS
 
+Checking remote folders...
+✅ Remote folders OK
+
 Creating backup directory...
 ✅ Backup directory ready
 
 Checking available disk space...
 
-Required:          285G
-Available:         719G
+Required:          1.2T
+Available:         2.4T
 
 Status:            ✅ Enough disk space
 
 ========================================
-Backing up Jellyfin
+Backing up Backups
 ========================================
 
-📂 Media
-Size:              249G
+📂 Backups
+Size:              830G
+
+Synchronizing...
+  623.10G  74%  112.03MB/s    0:23:41
+
 Status:            ✅ OK
 
-📂 Configuration
-Size:              43M
-Status:            ✅ OK
-
-Completed in:      00:00:18
+Completed in:      01:31:12
 
 🎉 Backup completed!
 
@@ -245,18 +359,17 @@ Completed in:      00:00:18
 Summary
 ========================================
 
-Jellyfin
-• Media
-Size:              249G
+• Backups
+Size:              830G
 Status:            ✅ OK
 
-• Configuration
-Size:              43M
+• Gallery
+Size:              412G
 Status:            ✅ OK
 
 Mode:              Backup
 Destination:       /mnt/data/backup
-Elapsed:           00:00:18
+Elapsed:           02:14:37
 ```
 
 ---
@@ -267,13 +380,15 @@ Every execution generates a timestamped log file.
 
 ```
 logs/
-└── 2026-06-29_20-13-09.log
+├── 2026-08-08_10-00-00.log            # backup.sh
+├── restore_2026-08-08_10-00-00.log     # restore.sh
+└── mirror_2026-08-08_10-00-00.log      # mirror-to-external.sh
 ```
 
 The log contains:
 
 - Execution information
-- Service results
+- Folder/target results
 - Backup summary
 - Errors
 - Execution time
@@ -286,15 +401,31 @@ Homelab Backup includes several protections to prevent common backup issues.
 
 ## Dry Run
 
-Preview all operations before executing them.
+Preview all operations before executing them, on every script.
 
 ## Disk Space Verification
 
-Checks whether the destination has enough available space before starting.
+Checks whether the destination has enough available space (or, for
+`mirror-to-external.sh`, capacity) before starting.
 
 ## SSH Validation
 
-Verifies the remote server is reachable before beginning the backup.
+Verifies the remote server is reachable before beginning the backup or restore.
+
+## Remote Folder Validation
+
+Verifies every selected folder exists on the server before any file is transferred, preventing `--delete` from wiping a local copy because of a wrong path.
+
+## Empty-Source Guard
+
+`restore.sh` and `mirror-to-external.sh` refuse to run if their source is
+missing or empty, so a mistaken path can never mass-delete the destination.
+
+## Typed Confirmation
+
+`restore.sh` and `mirror-to-external.sh` require typing a confirmation phrase
+(the drive label, for `mirror-to-external.sh`) before touching remote data or
+erasing a drive. `--dry-run` never needs confirmation.
 
 ## Incremental Synchronization
 
@@ -302,13 +433,8 @@ Uses `rsync` to transfer only changed files.
 
 ## Automatic Cleanup
 
-Files removed from the remote server are also removed locally using:
-
-```text
---delete
-```
-
-keeping the backup synchronized.
+Files removed from the source are also removed at the destination when
+`--delete` is used, keeping the two sides synchronized.
 
 ## Error Handling
 
@@ -325,7 +451,7 @@ The script displays:
 
 # Architecture
 
-The project follows a modular architecture.
+Each script follows the same modular architecture.
 
 ```
 Configuration
@@ -343,7 +469,7 @@ Validation
 Synchronization Engine
         │
         ▼
-Service Backups
+Folder/Target/Profile Backups
         │
         ▼
 Summary
@@ -357,22 +483,23 @@ Each function has a single responsibility, making the project easy to maintain a
 
 ## Current
 
-- [x] Jellyfin backup
-- [x] Immich backup
-- [x] Vaultwarden backup
+- [x] Folder-based backups
+- [x] Live transfer progress
 - [x] Dry Run
 - [x] Logging
 - [x] Backup summary
 - [x] Disk space verification
+- [x] Remote folder validation
 - [x] Error handling
 - [x] SSH validation
+- [x] ZimaOS-side backup script (`zimaos/backup.sh`)
+- [x] Restore utility (`restore.sh`)
+- [x] Ad-hoc external drive mirroring (`mirror-to-external.sh`)
 
 ## Planned
 
-- [ ] Nextcloud configuration backup
 - [ ] Compression support
 - [ ] Email notifications
-- [ ] Restore utility
 - [ ] Backup verification
 - [ ] Configuration validation
 - [ ] Optional parallel backups

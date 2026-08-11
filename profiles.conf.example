@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+
+########################################
+# mirror-to-external.sh profiles
+#
+# Copy this file to profiles.conf and adjust it.
+#
+# Each entry: "name|type|source|description"
+#
+#   name        Identifier passed to mirror-to-external.sh <name>.
+#   type        "local"  - source is a path on this machine.
+#               "remote" - source is a path on the ZimaOS server
+#                          (reached over SSH using REMOTE_USER,
+#                          REMOTE_HOST, SSH_PORT from config.sh).
+#   source      Absolute path.
+#   description Shown before the destructive confirmation prompt.
+########################################
+
+PROFILES=(
+    "nextcloud|local|/mnt/data/nextcloud|Nextcloud Desktop Client sync folder"
+    "media|remote|/media/DATA4TB/Media|ZimaOS DATA4TB Media folder"
+)

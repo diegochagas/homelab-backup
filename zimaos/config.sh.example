@@ -1,0 +1,34 @@
+#!/bin/sh
+
+########################################
+# ZimaOS server-side backup
+#
+# Runs locally on the ZimaOS box (cron/
+# scheduled task). Copy this file to
+# config.sh and adjust as needed.
+########################################
+
+# Log file. Must live under a path that
+# already exists once DST_APPDATA's
+# parent is created (see backup.sh).
+LOG="/media/DATA4TB/Backups/backup.log"
+
+# Live application data (Docker bind
+# mounts) and where it gets backed up to
+# on the external drive.
+SRC_APPDATA="/DATA/AppData"
+DST_APPDATA="/media/DATA4TB/Backups/AppData"
+
+# Full external drive and the second
+# drive it gets mirrored to.
+SRC_DATA="/media/DATA4TB"
+DST_MIRROR="/media/BACKUP4TB"
+
+# Folder(s) under SRC_DATA to exclude
+# from the SRC_DATA -> DST_MIRROR pass.
+MIRROR_EXCLUDE="nc-skeleton"
+
+# Containers stopped before backing up
+# SRC_APPDATA (for filesystem-consistent
+# copies) and restarted right after.
+APPS="vaultwarden jellyfin qbittorrent nextcloud immich-server immich-postgres"
