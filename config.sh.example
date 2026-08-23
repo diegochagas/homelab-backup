@@ -50,3 +50,15 @@ FOLDERS=(
 ########################################
 
 LOG_DIR="./logs"
+
+########################################
+# Server-side backup freshness
+#
+# backup.sh warns when the server's own
+# zimaos/backup.sh hasn't run within
+# this many hours (ZimaOS updates are
+# known to wipe root's crontab).
+########################################
+
+SERVER_BACKUP_LOG="$REMOTE_ROOT/Backups/backup.log"
+MAX_SERVER_BACKUP_AGE_HOURS=48

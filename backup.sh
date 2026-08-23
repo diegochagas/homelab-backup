@@ -247,6 +247,40 @@ check_remote_folders() {
     print_info "✅ Remote folders OK"
 }
 
+########################################
+# Warns when the server-side backup
+# (zimaos/backup.sh) hasn't run recently
+# — e.g. after a ZimaOS update wiped
+# root's crontab.
+########################################
+check_server_backup_freshness() {
+    print_info
+    print_info "Checking server-side backup age..."
+
+    local log_mtime
+    log_mtime=$(ssh \
+        -p "$SSH_PORT" \
+        "$REMOTE" \
+        "stat -c %Y \"$SERVER_BACKUP_LOG\" 2>/dev/null" || true)
+
+    if [[ -z "$log_mtime" ]]; then
+        print_info "⚠️  Server backup log not found: $SERVER_BACKUP_LOG"
+        print_info "⚠️  Has zimaos/backup.sh ever run on the server?"
+        return 0
+    fi
+
+    local age_hours=$(( ($(date +%s) - log_mtime) / 3600 ))
+
+    if (( age_hours > MAX_SERVER_BACKUP_AGE_HOURS )); then
+        print_info "⚠️  WARNING: server-side backup is ${age_hours}h old ($((age_hours / 24)) days)"
+        print_info "⚠️  The 4am cron job may be gone — ZimaOS updates wipe root's crontab."
+        print_info "⚠️  Check on the server: sudo crontab -l"
+    else
+        print_field "Last run:" "${age_hours}h ago"
+        print_info "✅ Server-side backup is fresh"
+    fi
+}
+
 create_backup_directory() {
     print_info
     print_info "Creating backup directory..."
@@ -516,6 +550,8 @@ initialize() {
     check_dependencies
 
     test_ssh_connection
+
+    check_server_backup_freshness
 
     check_remote_folders
 

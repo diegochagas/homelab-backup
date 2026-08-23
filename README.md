@@ -414,6 +414,13 @@ Checks whether the destination has enough available space (or, for
 
 Verifies the remote server is reachable before beginning the backup or restore.
 
+## Server-side Backup Freshness
+
+`backup.sh` checks the modification time of the server-side backup log and
+warns when `zimaos/backup.sh` hasn't run within `MAX_SERVER_BACKUP_AGE_HOURS`
+(default 48h) — catching a dead cron job (ZimaOS updates wipe root's crontab)
+within a day instead of silently losing backups.
+
 ## Remote Folder Validation
 
 Verifies every selected folder exists on the server before any file is transferred, preventing `--delete` from wiping a local copy because of a wrong path.
