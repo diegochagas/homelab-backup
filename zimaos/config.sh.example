@@ -19,6 +19,13 @@ LOG="/media/DATA4TB/Backups/backup.log"
 SRC_APPDATA="/DATA/AppData"
 DST_APPDATA="/media/DATA4TB/Backups/AppData"
 
+# Projects on the system drive (code is
+# on GitHub, but gitignored files like
+# .env.docker only exist here) and where
+# they get backed up to.
+SRC_PROJECTS="/DATA/Projects"
+DST_PROJECTS="/media/DATA4TB/Backups/Projects"
+
 # Full external drive and the second
 # drive it gets mirrored to.
 SRC_DATA="/media/DATA4TB"
@@ -31,4 +38,4 @@ MIRROR_EXCLUDE="nc-skeleton"
 # Containers stopped before backing up
 # SRC_APPDATA (for filesystem-consistent
 # copies) and restarted right after.
-APPS="vaultwarden jellyfin qbittorrent nextcloud immich-server immich-postgres"
+APPS="vaultwarden jellyfin qbittorrent nextcloud immich-server immich-postgres postgresql"

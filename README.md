@@ -45,7 +45,7 @@ cold/offline external drives.
 
 | Stage | Script | Runs on | Direction | Purpose |
 | ----- | ------ | ------- | --------- | ------- |
-| 1 | `zimaos/backup.sh` | ZimaOS (cron) | `/DATA/AppData` → `DATA4TB`, `DATA4TB` → `BACKUP4TB` | Consistent local copy + local mirror |
+| 1 | `zimaos/backup.sh` | ZimaOS (cron) | `/DATA/AppData` + `/DATA/Projects` → `DATA4TB`, `DATA4TB` → `BACKUP4TB` | Consistent local copy + local mirror |
 | 2 | `backup.sh` | Linux Mint (systemd timer) | `DATA4TB` → `/mnt/data/backup` | Offsite copy |
 | 3 | `restore.sh` | Linux Mint (manual) | `/mnt/data/backup` → ZimaOS | Disaster recovery |
 | — | `mirror-to-external.sh` | Linux Mint (manual) | local or ZimaOS → external USB drive | Ad-hoc cold/offline copies |
@@ -211,8 +211,10 @@ Schedule it with cron (or ZimaOS's own Task Scheduler) to run daily before `back
 ```
 
 Stops the configured app containers, mirrors `/DATA/AppData` onto the external
-drive, restarts the containers, then mirrors the whole external drive onto a
-second drive. Intended to run via cron on the ZimaOS box itself.
+drive, restarts the containers, mirrors `/DATA/Projects` (gitignored files like
+`.env.docker` only exist there) onto the external drive, then mirrors the whole
+external drive onto a second drive. Intended to run via cron on the ZimaOS box
+itself.
 
 ## Stage 2 — Pull to Linux Mint
 

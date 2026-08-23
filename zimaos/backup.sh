@@ -4,7 +4,8 @@
 # Runs locally on the ZimaOS box:
 #   1. Stops the app containers, mirrors SRC_APPDATA onto the external
 #      drive (DST_APPDATA), restarts the containers.
-#   2. Mirrors the whole external drive (SRC_DATA) onto the second
+#   2. Mirrors SRC_PROJECTS onto the external drive (DST_PROJECTS).
+#   3. Mirrors the whole external drive (SRC_DATA) onto the second
 #      drive (DST_MIRROR).
 #
 # This is stage 1 of the backup chain; homelab-backup/backup.sh (stage 2,
@@ -25,7 +26,7 @@ mkdir -p "$(dirname "$LOG")"
 
 log() { echo "$(date '+%F %T') $1" >> "$LOG"; }
 
-for p in "$SRC_APPDATA" "$SRC_DATA" "$DST_MIRROR"; do
+for p in "$SRC_APPDATA" "$SRC_PROJECTS" "$SRC_DATA" "$DST_MIRROR"; do
   [ -d "$p" ] || { log "ABORT: $p missing - drive not mounted?"; exit 1; }
 done
 mountpoint -q "$SRC_DATA"   || { log "ABORT: $SRC_DATA not a mountpoint"; exit 1; }
@@ -42,6 +43,9 @@ for c in $APPS; do docker stop "$c" >> "$LOG" 2>&1 || true; done
 rsync -a --delete "$SRC_APPDATA/" "$DST_APPDATA/" >> "$LOG" 2>&1
 restart_apps
 trap - EXIT
+
+mkdir -p "$DST_PROJECTS"
+rsync -a --delete --exclude 'node_modules' "$SRC_PROJECTS/" "$DST_PROJECTS/" >> "$LOG" 2>&1
 
 rsync -a --delete --exclude "$MIRROR_EXCLUDE" "$SRC_DATA/" "$DST_MIRROR/" >> "$LOG" 2>&1
 
