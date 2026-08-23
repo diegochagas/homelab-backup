@@ -16,31 +16,32 @@ cold/offline external drives.
 ## The Backup Chain
 
 ```
-┌─────────────────────────┐        ┌──────────────────────────┐
-│  ZimaOS server           │        │  Linux Mint workstation   │
-│                           │        │                            │
-│  /DATA/AppData  ───────┐ │        │                            │
-│         (live app data)│ │        │                            │
-│                         ▼ │        │                            │
-│  zimaos/backup.sh          │        │                            │
-│         │                 │        │                            │
-│         ▼                 │        │                            │
-│  DATA4TB/Backups/AppData   │        │                            │
-│  DATA4TB/Backups           │  SSH   │                            │
-│  DATA4TB/Gallery      ─────┼───────▶│  backup.sh                 │
-│         │                 │  pull  │       │                     │
-│         ▼                 │        │       ▼                     │
-│  BACKUP4TB (full mirror)   │        │  /mnt/data/backup           │
-│                           │        │       │                     │
-│         ▲                 │  SSH   │       │                     │
-│         └─────────────────┼────────┤  restore.sh (DR only)       │
-│                           │  push  │       │                     │
-│                           │        │       ▼                     │
-│                           │        │  mirror-to-external.sh       │
-│                           │        │       │                     │
-│                           │        │       ▼                     │
-│                           │        │  external USB drive          │
-└─────────────────────────┘        └──────────────────────────┘
+┌──────────────────────────┐          ┌──────────────────────────┐
+│ ZimaOS server            │          │ Linux Mint workstation   │
+│                          │          │                          │
+│ /DATA/AppData            │          │                          │
+│   (live app data)        │          │                          │
+│       │                  │          │                          │
+│       ▼                  │          │                          │
+│ zimaos/backup.sh         │          │                          │
+│       │                  │          │                          │
+│       ▼                  │          │                          │
+│ DATA4TB/Backups/AppData  │          │                          │
+│ DATA4TB/Backups          │   SSH    │                          │
+│ DATA4TB/Gallery          │──pull──▶ │ backup.sh                │
+│       │                  │          │       │                  │
+│       ▼                  │          │       ▼                  │
+│ BACKUP4TB (full mirror)  │          │ /mnt/data/backup         │
+│                          │          │       │                  │
+│       ▲                  │   SSH    │       ▼                  │
+│       │                  │◀──push── │ restore.sh (DR only)     │
+│                          │          │       │                  │
+│                          │          │       ▼                  │
+│                          │          │ mirror-to-external.sh    │
+│                          │          │       │                  │
+│                          │          │       ▼                  │
+│                          │          │ external USB drive       │
+└──────────────────────────┘          └──────────────────────────┘
 ```
 
 | Stage | Script | Runs on | Direction | Purpose |
