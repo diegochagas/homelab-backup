@@ -49,6 +49,7 @@ cold/offline external drives.
 | 2 | `backup.sh` | Linux Mint (systemd timer) | `DATA4TB` → `/mnt/data/backup` | Offsite copy |
 | 3 | `restore.sh` | Linux Mint (manual) | `/mnt/data/backup` → ZimaOS | Disaster recovery |
 | — | `mirror-to-external.sh` | Linux Mint (manual) | local or ZimaOS → external USB drive | Ad-hoc cold/offline copies |
+| — | `notify.sh` | Both | Telegram | Called by the backup scripts to report a finished/failed run |
 
 ---
 
@@ -69,6 +70,7 @@ cold/offline external drives.
 - ✅ Centralized error handling using `trap`
 - ✅ Configuration separated from source code
 - ✅ Modular architecture for easy expansion
+- ✅ Telegram notification when each backup stage finishes or fails
 
 ---
 
@@ -99,6 +101,9 @@ homelab-backup/
 ├── zimaos/
 │   ├── backup.sh               # Stage 1: runs on the ZimaOS server itself
 │   └── config.sh.example
+│
+├── notify.sh                   # Telegram message helper used by the scripts
+├── telegram.env.example
 │
 ├── LICENSE
 ├── README.md
@@ -199,6 +204,27 @@ nano config.sh
 ```
 
 Schedule it with cron (or ZimaOS's own Task Scheduler) to run daily before `backup.sh`'s pull.
+
+## Telegram notifications (optional)
+
+`backup.sh` and `zimaos/backup.sh` send a Telegram message when a run
+finishes (✅ with the per-folder summary and elapsed time) or fails (🚨 with
+the exit code, line and command). Dry runs never notify.
+
+On each machine that runs a backup script:
+
+```bash
+cp telegram.env.example telegram.env
+chmod 600 telegram.env
+nano telegram.env     # TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID
+```
+
+Test it with `./notify.sh "hello"`. Without `telegram.env` the scripts
+behave exactly as before.
+
+For on-demand status, automatic alerts and stale-backup detection, see the
+companion [homelab-monitor](https://github.com/diegochagas/homelab-monitor),
+which reads this project's logs.
 
 ---
 

@@ -26,6 +26,37 @@ mkdir -p "$(dirname "$LOG")"
 
 log() { echo "$(date '+%F %T') $1" >> "$LOG"; }
 
+# Telegram notification via notify.sh at the repo root (no-op when unconfigured).
+notify() {
+    [ -x "$SCRIPT_DIR/../notify.sh" ] || return 0
+    "$SCRIPT_DIR/../notify.sh" "$1" >/dev/null 2>&1 || true
+}
+
+elapsed() {
+    secs=$(( $(date +%s) - START ))
+    printf '%02d:%02d:%02d' $((secs/3600)) $(((secs%3600)/60)) $((secs%60))
+}
+
+START=$(date +%s)
+APPS_STOPPED=0
+
+restart_apps() { for c in $APPS; do docker start "$c" >> "$LOG" 2>&1 || true; done; APPS_STOPPED=0; }
+
+# Runs on every exit: restarts apps if we died while they were stopped and
+# reports failures, so a crashed backup never goes unnoticed.
+on_exit() {
+    rc=$?
+    [ "$APPS_STOPPED" = 1 ] && restart_apps
+    if [ "$rc" -ne 0 ]; then
+        log "ABORT: exit code $rc"
+        notify "🚨 BACKUP FAILED — $(hostname)
+
+ZimaOS server-side backup exited with code $rc after $(elapsed).
+See $LOG"
+    fi
+}
+trap on_exit EXIT
+
 for p in "$SRC_APPDATA" "$SRC_PROJECTS" "$SRC_DATA" "$DST_MIRROR"; do
   [ -d "$p" ] || { log "ABORT: $p missing - drive not mounted?"; exit 1; }
 done
@@ -35,14 +66,11 @@ mountpoint -q "$DST_MIRROR" || { log "ABORT: $DST_MIRROR not a mountpoint"; exit
 mkdir -p "$DST_APPDATA"
 log "=== Backup started ==="
 
-restart_apps() { for c in $APPS; do docker start "$c" >> "$LOG" 2>&1 || true; done; }
-trap restart_apps EXIT
-
+APPS_STOPPED=1
 for c in $APPS; do docker stop "$c" >> "$LOG" 2>&1 || true; done
 
 rsync -a --delete "$SRC_APPDATA/" "$DST_APPDATA/" >> "$LOG" 2>&1
 restart_apps
-trap - EXIT
 
 mkdir -p "$DST_PROJECTS"
 rsync -a --delete --exclude 'node_modules' "$SRC_PROJECTS/" "$DST_PROJECTS/" >> "$LOG" 2>&1
@@ -50,3 +78,10 @@ rsync -a --delete --exclude 'node_modules' "$SRC_PROJECTS/" "$DST_PROJECTS/" >> 
 rsync -a --delete --exclude "$MIRROR_EXCLUDE" "$SRC_DATA/" "$DST_MIRROR/" >> "$LOG" 2>&1
 
 log "=== Backup finished ==="
+
+notify "✅ BACKUP FINISHED — $(hostname)
+
+AppData + Projects → $SRC_DATA
+$SRC_DATA → $DST_MIRROR
+
+Elapsed: $(elapsed)"

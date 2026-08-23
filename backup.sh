@@ -45,6 +45,19 @@ print_info() {
 }
 
 ########################################
+# Sends a Telegram message through
+# notify.sh (no-op when telegram.env
+# isn't configured).
+########################################
+notify() {
+    local script="$SCRIPT_DIR/notify.sh"
+
+    [[ -x "$script" ]] || return 0
+
+    "$script" "$@" >/dev/null 2>&1 || true
+}
+
+########################################
 # Initializes the log file.
 ########################################
 initialize_logging() {
@@ -117,6 +130,17 @@ handle_error() {
     print_info
     print_info "See log:"
     print_info "  $LOG_FILE"
+
+    if [[ "$DRY_RUN" != true ]]; then
+        notify "🚨 BACKUP FAILED — $(hostname -s)
+
+Folder:    $TARGET
+Exit code: $exit_code
+Line:      $line
+Command:   $command
+
+Log: $(basename "$LOG_FILE")"
+    fi
 
     exit "$exit_code"
 }
@@ -544,6 +568,30 @@ print_summary() {
     print_field "Elapsed:" "$(format_time "$elapsed")"
 }
 
+########################################
+# Builds the Telegram summary sent when
+# the backup finishes.
+#
+# Arguments:
+#   $1 - Elapsed seconds
+########################################
+build_notification() {
+    local elapsed="$1"
+
+    echo "✅ BACKUP FINISHED — $(hostname -s)"
+    echo
+    echo "ZimaOS → $LOCAL_BACKUP"
+    echo
+
+    for item in "${SUMMARY[@]}"; do
+        IFS="|" read -r name size status <<< "$item"
+        echo "$status $name ($size)"
+    done
+
+    echo
+    echo "Elapsed: $(format_time "$elapsed")"
+}
+
 initialize() {
     print_section "Initialization"
 
@@ -589,6 +637,10 @@ main() {
     echo
 
     write_log_footer "$elapsed"
+
+    if [[ "$DRY_RUN" != true ]]; then
+        notify "$(build_notification "$elapsed")"
+    fi
 }
 
 main "$@"
