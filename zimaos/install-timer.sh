@@ -36,8 +36,11 @@ systemctl daemon-reload
 systemctl enable --now "$TIMER"
 
 # Drop any old cron entry for the same script so it doesn't fire twice.
+# (grep -v exits 1, tripping pipefail, when the removed line was the only
+# one — that's fine, it just means the crontab is now empty; `|| true`
+# keeps the script going either way.)
 if crontab -l 2>/dev/null | grep -qF "$BACKUP_DIR/zimaos/backup.sh"; then
-    crontab -l | grep -vF "$BACKUP_DIR/zimaos/backup.sh" | crontab -
+    crontab -l | grep -vF "$BACKUP_DIR/zimaos/backup.sh" | crontab - || true
     echo "Removed the old crontab entry for backup.sh (replaced by the timer)."
 fi
 
