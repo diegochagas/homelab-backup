@@ -46,7 +46,7 @@ cold/offline external drives.
 
 | Stage | Script | Runs on | Direction | Purpose |
 | ----- | ------ | ------- | --------- | ------- |
-| 1 | `zimaos/backup.sh` | ZimaOS (cron) | `/DATA/AppData` + `/DATA/Projects` → `DATA4TB`, `DATA4TB` → `BACKUP4TB` | Consistent local copy + local mirror |
+| 1 | `zimaos/backup.sh` | ZimaOS (systemd timer) | `/DATA/AppData` + `/DATA/Projects` → `DATA4TB`, `DATA4TB` → `BACKUP4TB` | Consistent local copy + local mirror |
 | 2 | `backup.sh` | Linux Mint (systemd timer) | `DATA4TB` → `/mnt/data/backup` | Offsite copy |
 | 3 | `restore.sh` | Linux Mint (manual) | `/mnt/data/backup` → ZimaOS | Disaster recovery |
 | — | `mirror-to-external.sh` | Linux Mint (manual) | local or ZimaOS → external USB drive | Ad-hoc cold/offline copies |
@@ -204,7 +204,20 @@ cp config.sh.example config.sh
 nano config.sh
 ```
 
-Schedule it with cron (or ZimaOS's own Task Scheduler) to run daily before `backup.sh`'s pull.
+Schedule it with the included systemd timer, run daily before `backup.sh`'s
+pull:
+
+```bash
+sudo ./zimaos/install-timer.sh
+```
+
+Don't use cron for this: on ZimaOS `/var` (and so `/var/spool/cron`) is a
+tmpfs, wiped on every reboot — not just OTA updates — which silently kills a
+cron-scheduled backup. `install-timer.sh` installs a root systemd service +
+timer under `/etc/systemd/system` instead, which persists, and removes any
+matching crontab entry so the job doesn't fire twice. Check it any time with
+`systemctl status homelab-backup.service homelab-backup.timer` or trigger a
+run immediately with `sudo systemctl start homelab-backup.service`.
 
 ## Telegram notifications (optional)
 
@@ -445,8 +458,9 @@ Verifies the remote server is reachable before beginning the backup or restore.
 
 `backup.sh` checks the modification time of the server-side backup log and
 warns when `zimaos/backup.sh` hasn't run within `MAX_SERVER_BACKUP_AGE_HOURS`
-(default 48h) — catching a dead cron job (ZimaOS updates wipe root's crontab)
-within a day instead of silently losing backups.
+(default 48h) — catching a dead schedule (see `zimaos/install-timer.sh` above
+for why cron isn't reliable on ZimaOS) within a day instead of silently
+losing backups.
 
 ## Remote Folder Validation
 

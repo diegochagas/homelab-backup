@@ -1,0 +1,10 @@
+[Unit]
+Description=ZimaOS server-side backup (homelab-backup)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=@BACKUP_DIR@/zimaos
+ExecStart=@BACKUP_DIR@/zimaos/backup.sh
