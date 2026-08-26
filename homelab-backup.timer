@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Homelab Backup daily
+
+[Timer]
+OnCalendar=*-*-* 10:00:00
+# If the machine was off or asleep at 10:00, run as soon as it's back up
+# instead of waiting a full day.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,7 @@
+[Unit]
+Description=Homelab Backup
+
+[Service]
+Type=oneshot
+WorkingDirectory=@BACKUP_DIR@
+ExecStart=@BACKUP_DIR@/backup.sh

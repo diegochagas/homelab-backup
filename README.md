@@ -96,6 +96,9 @@ homelab-backup/
 ├── backup.sh                  # Stage 2: pull ZimaOS -> Linux Mint
 ├── restore.sh                 # Stage 3: push Linux Mint -> ZimaOS (DR)
 ├── mirror-to-external.sh      # Ad-hoc: mirror a profile onto an external drive
+├── install-timer.sh           # Installs backup.sh as a systemd --user timer
+├── homelab-backup.service      # Unit template used by install-timer.sh
+├── homelab-backup.timer        # Unit template used by install-timer.sh
 ├── config.sh.example
 ├── profiles.conf.example
 │
@@ -193,6 +196,20 @@ If you plan to use `mirror-to-external.sh`, also create its profiles file:
 cp profiles.conf.example profiles.conf
 nano profiles.conf
 ```
+
+Schedule it with the included systemd `--user` timer, run daily:
+
+```bash
+./install-timer.sh
+```
+
+Don't also add a cron entry for `backup.sh` — a crontab entry and this timer
+firing at the same time of day runs the backup twice back-to-back (the
+second run's rsync finds almost nothing left to sync, so it shows up as a
+near-instant duplicate Telegram notification). `install-timer.sh` removes
+any matching crontab entry so the job doesn't fire twice. Check it any time
+with `systemctl --user status homelab-backup.service homelab-backup.timer`
+or trigger a run immediately with `systemctl --user start homelab-backup.service`.
 
 ## ZimaOS side (zimaos/backup.sh)
 
