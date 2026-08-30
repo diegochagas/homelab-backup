@@ -37,6 +37,16 @@ elapsed() {
     printf '%02d:%02d:%02d' $((secs/3600)) $(((secs%3600)/60)) $((secs%60))
 }
 
+# rsync exit 24 means source files vanished mid-transfer - expected when
+# mirroring data that running apps are still writing (e.g. Nextcloud's
+# SQLite -wal/-shm files); anything else stays fatal.
+mirror() {
+    rsync "$@" >> "$LOG" 2>&1 && return 0
+    rc=$?
+    [ "$rc" -eq 24 ] || return "$rc"
+    log "WARN: some source files vanished during rsync (code 24) - continuing"
+}
+
 START=$(date +%s)
 APPS_STOPPED=0
 
@@ -69,13 +79,13 @@ log "=== Backup started ==="
 APPS_STOPPED=1
 for c in $APPS; do docker stop "$c" >> "$LOG" 2>&1 || true; done
 
-rsync -a --delete "$SRC_APPDATA/" "$DST_APPDATA/" >> "$LOG" 2>&1
+mirror -a --delete "$SRC_APPDATA/" "$DST_APPDATA/"
 restart_apps
 
 mkdir -p "$DST_PROJECTS"
-rsync -a --delete --exclude 'node_modules' "$SRC_PROJECTS/" "$DST_PROJECTS/" >> "$LOG" 2>&1
+mirror -a --delete --exclude 'node_modules' "$SRC_PROJECTS/" "$DST_PROJECTS/"
 
-rsync -a --delete --exclude "$MIRROR_EXCLUDE" "$SRC_DATA/" "$DST_MIRROR/" >> "$LOG" 2>&1
+mirror -a --delete --exclude "$MIRROR_EXCLUDE" "$SRC_DATA/" "$DST_MIRROR/"
 
 log "=== Backup finished ==="
 

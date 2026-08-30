@@ -504,7 +504,12 @@ sync_folder() {
         print_info "Synchronizing..."
     fi
 
-    if rsync "${options[@]}" "$REMOTE:$remote_path/" "$destination/"; then
+    # rsync exit 24 (source files vanished mid-transfer) is expected when
+    # pulling folders the server's apps are still writing to - treat it as OK.
+    local rc=0
+    rsync "${options[@]}" "$REMOTE:$remote_path/" "$destination/" || rc=$?
+
+    if [[ "$rc" -eq 0 || "$rc" -eq 24 ]]; then
         print_field "  Status:" "✅ OK"
         SUMMARY+=("$folder|$size|✅ OK")
     else
