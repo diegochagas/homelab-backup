@@ -17,12 +17,14 @@ trap 'handle_error $? $LINENO "$BASH_COMMAND"' ERR
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 
+# shellcheck source=/dev/null # gitignored, absent in CI
 source "$SCRIPT_DIR/config.sh"
 
 if [[ ! -f "$SCRIPT_DIR/profiles.conf" ]]; then
     echo "❌ Missing $SCRIPT_DIR/profiles.conf - copy profiles.conf.example and adjust it." >&2
     exit 1
 fi
+# shellcheck source=/dev/null # gitignored, absent in CI
 source "$SCRIPT_DIR/profiles.conf"
 
 readonly VERSION="1.0.0"

@@ -16,6 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 
 # Load configuration
+# shellcheck source=/dev/null # gitignored, absent in CI
 source "$SCRIPT_DIR/config.sh"
 
 readonly VERSION="1.0.0"
