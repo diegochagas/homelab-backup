@@ -10,7 +10,7 @@ shellcheck -x -P SCRIPTDIR -s sh zimaos/backup.sh zimaos/failover-check.sh zimao
 # bash scripts
 shellcheck -x -P SCRIPTDIR backup.sh restore.sh mirror-to-external.sh install-timer.sh zimaos/install-timer.sh tests/run.sh scripts/check
 
-if command -v shfmt > /dev/null 2>&1; then
+if command -v shfmt >/dev/null 2>&1; then
     echo "== shfmt"
     shfmt -d -i 4 -ci zimaos/lib/drive.sh zimaos/failover-check.sh zimaos/failback.sh tests/run.sh scripts/check
 else

@@ -28,8 +28,8 @@ setup() {
     # ATTACH_TIMEOUT is in whole seconds, so tests where the disk comes back
     # asynchronously raise it: with 1s the deadline can be a few ms away.
     export DRY_RUN=0 POLL=0 ATTACH_TIMEOUT=1 MOUNT_WAIT=0 HEALTH_TIMEOUT=5
-    : > "$FAKE_MOUNTS"
-    : > "$FAKE_CALLS"
+    : >"$FAKE_MOUNTS"
+    : >"$FAKE_CALLS"
     DATA="$T/media/DATA4TB"
     MIRROR="$T/media/BACKUP4TB"
     mkdir -p "$DATA" "$MIRROR" "$T/DATA/AppData" "$T/DATA/Projects" "$STATE_DIR"
@@ -47,23 +47,26 @@ mk_disk() {
     local usb="$SYSFS/devices/pci0000:00/usb/$3"
     mkdir -p "$usb/$3:1.0/$4/target/lun" "$usb/power" "$SYSFS/block/$1" "$SYSFS/class/scsi_host/$4" "$DEVFS/disk/by-uuid"
     touch "$usb/idVendor"
-    echo on > "$usb/power/control"
+    echo on >"$usb/power/control"
     ln -s "$usb/$3:1.0/$4/target/lun" "$SYSFS/block/$1/device"
-    : > "$SYSFS/block/$1/device/delete"
-    : > "$SYSFS/class/scsi_host/$4/scan"
-    : > "$DEVFS/$1"
+    : >"$SYSFS/block/$1/device/delete"
+    : >"$SYSFS/class/scsi_host/$4/scan"
+    : >"$DEVFS/$1"
     ln -sf "../../$1" "$DEVFS/disk/by-uuid/$2"
 }
 
-unplug() { rm -f "$DEVFS/disk/by-uuid/$1"; }      # device vanishes (by UUID)
+unplug() { rm -f "$DEVFS/disk/by-uuid/$1"; }             # device vanishes (by UUID)
 replug() { ln -sf "../../$2" "$DEVFS/disk/by-uuid/$1"; } # UUID NAME
 
-mount_fake() { echo "$1 $2 $3" >> "$FAKE_MOUNTS"; }
-unmount_fake() { grep -v "^$1 " "$FAKE_MOUNTS" > "$FAKE_MOUNTS.tmp"; mv "$FAKE_MOUNTS.tmp" "$FAKE_MOUNTS"; }
+mount_fake() { echo "$1 $2 $3" >>"$FAKE_MOUNTS"; }
+unmount_fake() {
+    grep -v "^$1 " "$FAKE_MOUNTS" >"$FAKE_MOUNTS.tmp"
+    mv "$FAKE_MOUNTS.tmp" "$FAKE_MOUNTS"
+}
 
 write_config() {
     export HOMELAB_CONFIG="$T/config.sh"
-    cat > "$HOMELAB_CONFIG" <<EOF
+    cat >"$HOMELAB_CONFIG" <<EOF
 LOG="$T/backup.log"
 SRC_APPDATA="$T/DATA/AppData"
 DST_APPDATA="$DATA/Backups/AppData"
@@ -99,7 +102,10 @@ assert_not_mounted() { ! grep -q "^$1 " "$FAKE_MOUNTS" || fail "expected $1 not 
 $(cat "$FAKE_MOUNTS")"; }
 mount_source() { awk -v t="$1" '$1 == t { s = $2 } END { print s }' "$FAKE_MOUNTS"; }
 
-fail() { CURRENT_FAILED=1; echo "    ✗ $1"; }
+fail() {
+    CURRENT_FAILED=1
+    echo "    ✗ $1"
+}
 
 run_test() {
     local tname=$1
@@ -159,8 +165,8 @@ test_lib_attach_rescans_recorded_host_and_fails_when_disk_never_returns() {
     lib
     drive_detach "$MIRROR_UUID"
     unplug "$MIRROR_UUID"
-    : > "$FAKE_CALLS"
-    ! drive_attach "$MIRROR_UUID" "$MIRROR" 2> /dev/null || fail "attach should fail without a disk"
+    : >"$FAKE_CALLS"
+    ! drive_attach "$MIRROR_UUID" "$MIRROR" 2>/dev/null || fail "attach should fail without a disk"
     assert_eq "- - -" "$(cat "$SYSFS/class/scsi_host/host2/scan")" "rescanned host2"
     assert_eq "" "$(cat "$SYSFS/class/scsi_host/host1/scan")" "host1 left alone"
     assert_eq on "$(cat "$SYSFS/devices/pci0000:00/usb/2-3/power/control")" "usb woken up"
@@ -169,7 +175,7 @@ test_lib_attach_rescans_recorded_host_and_fails_when_disk_never_returns() {
 test_lib_attach_rescans_every_host_without_state() {
     lib
     unplug "$MIRROR_UUID"
-    ! drive_attach "$MIRROR_UUID" "$MIRROR" 2> /dev/null
+    ! drive_attach "$MIRROR_UUID" "$MIRROR" 2>/dev/null
     assert_eq "- - -" "$(cat "$SYSFS/class/scsi_host/host1/scan")" "host1"
     assert_eq "- - -" "$(cat "$SYSFS/class/scsi_host/host2/scan")" "host2"
 }
@@ -191,7 +197,8 @@ test_lib_attach_is_a_noop_when_already_mounted() {
 test_lib_health_states() {
     lib
     assert_eq OK "$(drive_health "$DATA" "$DATA_UUID")" "ok"
-    unmount_fake "$DATA"; mount_fake "$DATA" "$DEVFS/sdc" ro,noatime
+    unmount_fake "$DATA"
+    mount_fake "$DATA" "$DEVFS/sdc" ro,noatime
     assert_eq RO "$(drive_health "$DATA" "$DATA_UUID")" "ro"
     unmount_fake "$DATA"
     assert_eq UNMOUNTED "$(drive_health "$DATA" "$DATA_UUID")" "unmounted"
@@ -206,12 +213,14 @@ test_lib_health_states() {
 check() { "$REPO/zimaos/failover-check.sh"; }
 
 test_failover_requires_config() {
-    HOMELAB_CONFIG=/nonexistent out=$(check 2>&1); rc=$?
+    HOMELAB_CONFIG=/nonexistent out=$(check 2>&1)
+    rc=$?
     assert_eq 1 "$rc" "exit code"
     assert_contains "$out" "Missing /nonexistent"
     CFG_FAILOVER=yes write_config
     sed -i 's/^DATA_UUID=.*/DATA_UUID=""/' "$HOMELAB_CONFIG"
-    out=$(check 2>&1); rc=$?
+    out=$(check 2>&1)
+    rc=$?
     assert_eq 1 "$rc" "exit code on empty DATA_UUID"
     assert_contains "$out" "DATA_UUID is not set"
 }
@@ -219,14 +228,17 @@ test_failover_requires_config() {
 test_failover_disabled_does_nothing() {
     CFG_FAILOVER=no write_config
     unplug "$DATA_UUID"
-    check; assert_eq 0 $? "exit"
+    check
+    assert_eq 0 $? "exit"
     assert_no_file "$STATE_DIR/failover.count"
     assert_eq "" "$(cat "$FAKE_CALLS")" "no calls"
 }
 
 test_failover_ro_or_unmounted_only_alerts() {
-    unmount_fake "$DATA"; mount_fake "$DATA" "$DEVFS/sdc" ro,noatime
-    check; check
+    unmount_fake "$DATA"
+    mount_fake "$DATA" "$DEVFS/sdc" ro,noatime
+    check
+    check
     assert_eq RO "$(cat "$STATE_DIR/failover.last-state")" "state"
     assert_no_file "$STATE_DIR/failover.count"
     assert_no_file "$STATE_DIR/failover.active"
@@ -250,11 +262,12 @@ test_failover_switches_after_threshold_and_stays() {
     assert_calls "^docker start app2$"
     assert_eq "$DEVFS/sdd" "$(mount_source "$DATA")" "mirror serves at SRC_DATA"
     # backup.sh must now refuse to run
-    out=$("$REPO/zimaos/backup.sh" 2>&1); rc=$?
+    out=$("$REPO/zimaos/backup.sh" 2>&1)
+    rc=$?
     assert_eq 1 "$rc" "backup.sh exit"
     assert_contains "$out" "Failover is active"
 
-    : > "$FAKE_CALLS"
+    : >"$FAKE_CALLS"
     check # steady state: nothing to do
     assert_eq "" "$(cat "$FAKE_CALLS")" "idempotent"
 }
@@ -264,11 +277,15 @@ test_failover_attaches_detached_mirror_before_switching() {
     drive_detach "$MIRROR_UUID" # nightly backup left it offline
     unplug "$MIRROR_UUID"
     unplug "$DATA_UUID"
-    : > "$FAKE_CALLS"
+    : >"$FAKE_CALLS"
     # the disk "comes back" on rescan: fake it by replugging as soon as scan is written
-    ( while [[ "$(cat "$SYSFS/class/scsi_host/host2/scan")" != "- - -" ]]; do sleep 0.05; done; replug "$MIRROR_UUID" sdd ) &
+    (
+        while [[ "$(cat "$SYSFS/class/scsi_host/host2/scan")" != "- - -" ]]; do sleep 0.05; done
+        replug "$MIRROR_UUID" sdd
+    ) &
     CFG_THRESHOLD=1 write_config
-    ATTACH_TIMEOUT=5 check; rc=$?
+    ATTACH_TIMEOUT=5 check
+    rc=$?
     wait
     assert_eq 0 "$rc" "exit"
     assert_calls "^mount UUID=$MIRROR_UUID $MIRROR$"
@@ -280,7 +297,8 @@ test_failover_leaves_apps_stopped_when_mirror_missing() {
     unplug "$DATA_UUID"
     unplug "$MIRROR_UUID"
     CFG_THRESHOLD=1 write_config
-    check 2> /dev/null; rc=$?
+    check 2>/dev/null
+    rc=$?
     assert_eq 1 "$rc" "exit"
     assert_calls "^docker stop app1$"
     assert_no_calls "^docker start"
@@ -293,8 +311,9 @@ test_failover_reestablishes_after_reboot_and_reports_data_back() {
     CFG_THRESHOLD=1 write_config
     check
     # "reboot": ZimaOS mounted only the mirror at its own path
-    : > "$FAKE_MOUNTS"; mount_fake "$MIRROR" "$DEVFS/sdd" rw,noatime
-    : > "$FAKE_CALLS"
+    : >"$FAKE_MOUNTS"
+    mount_fake "$MIRROR" "$DEVFS/sdd" rw,noatime
+    : >"$FAKE_CALLS"
     check
     assert_calls "^mount --bind $MIRROR $DATA$"
     assert_calls "^docker start app1$"
@@ -320,14 +339,17 @@ test_failover_dry_run_changes_nothing() {
 # --- backup.sh ------------------------------------------------------------
 
 test_backup_requires_config() {
-    HOMELAB_CONFIG=/nonexistent out=$("$REPO/zimaos/backup.sh" 2>&1); rc=$?
+    HOMELAB_CONFIG=/nonexistent out=$("$REPO/zimaos/backup.sh" 2>&1)
+    rc=$?
     assert_eq 1 "$rc" "exit"
     assert_contains "$out" "Missing /nonexistent"
 }
 
 test_backup_aborts_on_read_only_data_drive() {
-    unmount_fake "$DATA"; mount_fake "$DATA" "$DEVFS/sdc" ro,noatime
-    "$REPO/zimaos/backup.sh" 2> /dev/null; rc=$?
+    unmount_fake "$DATA"
+    mount_fake "$DATA" "$DEVFS/sdc" ro,noatime
+    "$REPO/zimaos/backup.sh" 2>/dev/null
+    rc=$?
     assert_eq 1 "$rc" "exit"
     assert_contains "$(cat "$T/backup.log")" "mounted read-only"
     assert_no_calls "^rsync"
@@ -337,9 +359,13 @@ test_backup_attaches_mirrors_and_detaches() {
     lib
     drive_detach "$MIRROR_UUID"
     unplug "$MIRROR_UUID"
-    : > "$FAKE_CALLS"
-    ( while [[ "$(cat "$SYSFS/class/scsi_host/host2/scan")" != "- - -" ]]; do sleep 0.05; done; replug "$MIRROR_UUID" sdd ) &
-    ATTACH_TIMEOUT=5 "$REPO/zimaos/backup.sh"; rc=$?
+    : >"$FAKE_CALLS"
+    (
+        while [[ "$(cat "$SYSFS/class/scsi_host/host2/scan")" != "- - -" ]]; do sleep 0.05; done
+        replug "$MIRROR_UUID" sdd
+    ) &
+    ATTACH_TIMEOUT=5 "$REPO/zimaos/backup.sh"
+    rc=$?
     wait
     assert_eq 0 "$rc" "exit"
     assert_eq "mount UUID=$MIRROR_UUID $MIRROR
@@ -358,7 +384,8 @@ hdparm -Y $DEVFS/sdd" "$(cat "$FAKE_CALLS")" "call sequence"
 }
 
 test_backup_detaches_mirror_even_when_rsync_fails() {
-    FAKE_RSYNC_RC=23 "$REPO/zimaos/backup.sh"; rc=$?
+    FAKE_RSYNC_RC=23 "$REPO/zimaos/backup.sh"
+    rc=$?
     assert_eq 23 "$rc" "exit"
     assert_calls "^docker start app1$" # apps restarted by the exit trap
     assert_calls "^umount $MIRROR$"
@@ -388,16 +415,18 @@ failover_now() {
     CFG_THRESHOLD=1 write_config
     check
     replug "$DATA_UUID" sdc
-    : > "$FAKE_CALLS"
+    : >"$FAKE_CALLS"
 }
 
 test_failback_refuses_without_failover_or_data_drive() {
-    out=$("$REPO/zimaos/failback.sh" --yes 2>&1); rc=$?
+    out=$("$REPO/zimaos/failback.sh" --yes 2>&1)
+    rc=$?
     assert_eq 1 "$rc" "exit without failover"
     assert_contains "$out" "No failover is active"
     failover_now
     unplug "$DATA_UUID"
-    out=$("$REPO/zimaos/failback.sh" --yes 2>&1); rc=$?
+    out=$("$REPO/zimaos/failback.sh" --yes 2>&1)
+    rc=$?
     assert_eq 1 "$rc" "exit without data drive"
     assert_contains "$out" "No drive with UUID $DATA_UUID"
     assert_file "$STATE_DIR/failover.active"
@@ -405,7 +434,8 @@ test_failback_refuses_without_failover_or_data_drive() {
 
 test_failback_dry_run_changes_nothing() {
     failover_now
-    out=$("$REPO/zimaos/failback.sh" --dry-run); rc=$?
+    out=$("$REPO/zimaos/failback.sh" --dry-run)
+    rc=$?
     assert_eq 0 "$rc" "exit"
     assert_contains "$out" "[dry-run] docker stop app1"
     assert_calls "^rsync -a --delete --dry-run"
@@ -416,7 +446,8 @@ test_failback_dry_run_changes_nothing() {
 
 test_failback_restores_and_detaches_mirror() {
     failover_now
-    "$REPO/zimaos/failback.sh" --yes > /dev/null; rc=$?
+    "$REPO/zimaos/failback.sh" --yes >/dev/null
+    rc=$?
     assert_eq 0 "$rc" "exit"
     assert_calls "^umount -l $DATA$"
     assert_calls "^mount UUID=$DATA_UUID $DATA$"
@@ -430,7 +461,8 @@ test_failback_restores_and_detaches_mirror() {
 
 test_failback_keeps_flag_and_apps_stopped_when_rsync_fails() {
     failover_now
-    FAKE_RSYNC_RC=11 "$REPO/zimaos/failback.sh" --yes > /dev/null 2>&1; rc=$?
+    FAKE_RSYNC_RC=11 "$REPO/zimaos/failback.sh" --yes >/dev/null 2>&1
+    rc=$?
     assert_eq 11 "$rc" "exit"
     assert_file "$STATE_DIR/failover.active"
     assert_no_calls "^docker start"
@@ -438,7 +470,8 @@ test_failback_keeps_flag_and_apps_stopped_when_rsync_fails() {
 
 test_failback_asks_for_typed_confirmation() {
     failover_now
-    out=$(printf "no\n" | "$REPO/zimaos/failback.sh" 2>&1); rc=$?
+    out=$(printf "no\n" | "$REPO/zimaos/failback.sh" 2>&1)
+    rc=$?
     assert_eq 1 "$rc" "exit"
     assert_contains "$out" "Aborted"
     assert_file "$STATE_DIR/failover.active"
@@ -452,9 +485,9 @@ test_failback_asks_for_typed_confirmation() {
 mint_setup() {
     MINT="$T/mint"
     mkdir -p "$MINT/logs" "$T/mnt/data/nextcloud" "$T/mnt/data/backup" "$T/local-backup"
-    echo data > "$T/mnt/data/nextcloud/file"
+    echo data >"$T/mnt/data/nextcloud/file"
     cp "$REPO/backup.sh" "$MINT/backup.sh"
-    cat > "$MINT/config.sh" <<EOF
+    cat >"$MINT/config.sh" <<EOF
 REMOTE_HOST="zimaos.test"
 REMOTE_USER="user"
 SSH_PORT=22
@@ -477,7 +510,8 @@ mint() { (cd "$MINT" && ./backup.sh "$@"); }
 
 test_mint_full_run_pushes_after_the_pull() {
     mint_setup
-    out=$(mint); rc=$?
+    out=$(mint)
+    rc=$?
     assert_eq 0 "$rc" "exit"
     assert_eq "rsync -a --human-readable --delete --rsync-path=sudo /usr/bin/rsync --info=progress2,name0 user@zimaos.test:/media/DATA/Backups/ $T/local-backup/Backups/
 rsync -a --human-readable --delete --rsync-path=sudo /usr/bin/rsync --info=progress2,name0 --exclude /.zimaos_storage.json --exclude /lost+found --exclude /backup $T/mnt/data/ user@zimaos.test:/media/MINT/" "$(grep ^rsync "$FAKE_CALLS")" "pull then push"
@@ -488,7 +522,7 @@ rsync -a --human-readable --delete --rsync-path=sudo /usr/bin/rsync --info=progr
 
 test_mint_folder_run_skips_the_push() {
     mint_setup
-    mint --folder Backups > /dev/null || fail "exit"
+    mint --folder Backups >/dev/null || fail "exit"
     assert_no_calls "^rsync.*/media/MINT/"
 }
 
@@ -503,7 +537,8 @@ test_mint_push_disabled_when_source_empty() {
 test_mint_push_refuses_unmounted_target() {
     mint_setup
     FAKE_REMOTE_MOUNTS=""
-    out=$(mint); rc=$?
+    out=$(mint)
+    rc=$?
     assert_eq 1 "$rc" "exit"
     assert_contains "$out" "/media/MINT is not a mounted drive on ZimaOS"
     assert_no_calls "^rsync.*/media/MINT/"
@@ -513,7 +548,8 @@ test_mint_push_refuses_unmounted_target() {
 test_mint_push_refuses_when_target_is_too_small() {
     mint_setup
     FAKE_REMOTE_AVAIL=1
-    out=$(mint); rc=$?
+    out=$(mint)
+    rc=$?
     assert_eq 1 "$rc" "exit"
     assert_contains "$out" "Not enough space on /media/MINT"
     assert_no_calls "^rsync.*/media/MINT/"
@@ -523,13 +559,13 @@ test_mint_push_counts_what_is_already_on_the_target() {
     mint_setup
     # avail is tiny but the target already holds (more than) the data: fits
     FAKE_REMOTE_AVAIL=1 FAKE_REMOTE_USED=100000000
-    mint > /dev/null || fail "exit"
+    mint >/dev/null || fail "exit"
     assert_calls "^rsync.*/media/MINT/"
 }
 
 test_mint_dry_run_pushes_with_n() {
     mint_setup
-    mint --dry-run > /dev/null || fail "exit"
+    mint --dry-run >/dev/null || fail "exit"
     assert_calls "^rsync -a --human-readable --delete --rsync-path=sudo /usr/bin/rsync -n --stats --exclude /.zimaos_storage.json --exclude /lost\\+found --exclude /backup $T/mnt/data/ user@zimaos.test:/media/MINT/$"
 }
 

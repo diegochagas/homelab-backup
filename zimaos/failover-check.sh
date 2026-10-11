@@ -52,12 +52,12 @@ mkdir -p "$STATE_DIR"
 
 # One run at a time, and never while backup.sh holds the same lock (it is
 # attaching/detaching the backup drive).
-exec 9> "$STATE_DIR/lock"
+exec 9>"$STATE_DIR/lock"
 flock -n 9 || exit 0
 
 log() {
     [ "$DRY_RUN" = 1 ] && echo "$1"
-    echo "$(date '+%F %T') $1" >> "$FAILOVER_LOG" 2> /dev/null || true
+    echo "$(date '+%F %T') $1" >>"$FAILOVER_LOG" 2>/dev/null || true
 }
 
 notify() {
@@ -66,12 +66,12 @@ notify() {
         echo "[dry-run] notify: $1"
         return 0
     fi
-    "$SCRIPT_DIR/../notify.sh" "$1" > /dev/null 2>&1 || true
+    "$SCRIPT_DIR/../notify.sh" "$1" >/dev/null 2>&1 || true
 }
 
 state_write() {
     [ "$DRY_RUN" = 1 ] && return 0
-    echo "$1" > "$2"
+    echo "$1" >"$2"
 }
 state_rm() {
     [ "$DRY_RUN" = 1 ] && return 0
@@ -79,8 +79,8 @@ state_rm() {
 }
 
 # docker prints the container name; its stderr is noise when a container is already stopped/started.
-stop_apps() { for c in $APPS; do run docker stop "$c" 2> /dev/null || true; done; }
-start_apps() { for c in $APPS; do run docker start "$c" 2> /dev/null || true; done; }
+stop_apps() { for c in $APPS; do run docker stop "$c" 2>/dev/null || true; done; }
+start_apps() { for c in $APPS; do run docker start "$c" 2>/dev/null || true; done; }
 
 mirror_is_primary() {
     src=$(drive_mount_source "$SRC_DATA")
@@ -120,7 +120,7 @@ if [ -f "$FLAG" ]; then
 $SRC_DATA was not the backup drive any more (reboot or the data drive came back).
 Apps are running from $DST_MIRROR again."
     fi
-    if drive_dev_by_uuid "$DATA_UUID" > /dev/null && [ ! -f "$RETURNED" ]; then
+    if drive_dev_by_uuid "$DATA_UUID" >/dev/null && [ ! -f "$RETURNED" ]; then
         state_write "$(date '+%F %T')" "$RETURNED"
         log "data drive is back - waiting for failback.sh"
         notify "ℹ️ DATA DRIVE IS BACK — $(hostname)
@@ -132,7 +132,7 @@ sudo $SCRIPT_DIR/failback.sh"
 fi
 
 state=$(drive_health "$SRC_DATA" "$DATA_UUID")
-prev=$(cat "$LAST" 2> /dev/null || echo OK)
+prev=$(cat "$LAST" 2>/dev/null || echo OK)
 state_write "$state" "$LAST"
 
 case $state in
@@ -156,7 +156,7 @@ sudo mount -o remount,rw $SRC_DATA   (or Unmount/Mount it in ZimaOS Storage)"
         fi
         ;;
     MISSING | IOERR)
-        n=$(( $(cat "$COUNT" 2> /dev/null || echo 0) + 1 ))
+        n=$(($(cat "$COUNT" 2>/dev/null || echo 0) + 1))
         state_write "$n" "$COUNT"
         log "data drive $state ($n/$FAIL_THRESHOLD)"
         if [ "$n" -ge "$FAIL_THRESHOLD" ]; then

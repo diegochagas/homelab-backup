@@ -24,7 +24,10 @@ for arg in "$@"; do
     case $arg in
         --dry-run) DRY_RUN=1 ;;
         --yes) YES=1 ;;
-        *) echo "Usage: $0 [--dry-run] [--yes]" >&2; exit 2 ;;
+        *)
+            echo "Usage: $0 [--dry-run] [--yes]" >&2
+            exit 2
+            ;;
     esac
 done
 export DRY_RUN="${DRY_RUN:-0}"
@@ -51,16 +54,19 @@ FAILOVER_LOG="$STATE_DIR/failover.log"
 
 log() {
     echo "$1"
-    echo "$(date '+%F %T') failback: $1" >> "$FAILOVER_LOG" 2> /dev/null || true
+    echo "$(date '+%F %T') failback: $1" >>"$FAILOVER_LOG" 2>/dev/null || true
 }
 notify() {
     [ -x "$SCRIPT_DIR/../notify.sh" ] || return 0
-    [ "$DRY_RUN" = 1 ] && { echo "[dry-run] notify: $1"; return 0; }
-    "$SCRIPT_DIR/../notify.sh" "$1" > /dev/null 2>&1 || true
+    [ "$DRY_RUN" = 1 ] && {
+        echo "[dry-run] notify: $1"
+        return 0
+    }
+    "$SCRIPT_DIR/../notify.sh" "$1" >/dev/null 2>&1 || true
 }
 # docker prints the container name; its stderr is noise when a container is already stopped/started.
-stop_apps() { for c in $APPS; do run docker stop "$c" 2> /dev/null || true; done; }
-start_apps() { for c in $APPS; do run docker start "$c" 2> /dev/null || true; done; }
+stop_apps() { for c in $APPS; do run docker stop "$c" 2>/dev/null || true; done; }
+start_apps() { for c in $APPS; do run docker start "$c" 2>/dev/null || true; done; }
 
 if [ ! -f "$FLAG" ]; then
     echo "No failover is active ($FLAG missing) - nothing to do." >&2
@@ -82,13 +88,19 @@ echo "Apps stopped meanwhile: $APPS"
 if [ "$DRY_RUN" != 1 ] && [ "$YES" != 1 ]; then
     printf 'Type "failback" to continue: '
     read -r answer
-    [ "$answer" = failback ] || { echo "Aborted."; exit 1; }
+    [ "$answer" = failback ] || {
+        echo "Aborted."
+        exit 1
+    }
 fi
 
 # Hold the same lock as backup.sh / failover-check.sh for the whole run.
 mkdir -p "$STATE_DIR"
-exec 9> "$STATE_DIR/lock"
-flock -n 9 || { echo "Another backup/failover script is running - try again later." >&2; exit 1; }
+exec 9>"$STATE_DIR/lock"
+flock -n 9 || {
+    echo "Another backup/failover script is running - try again later." >&2
+    exit 1
+}
 
 START=$(date +%s)
 log "=== Failback started ==="
@@ -101,15 +113,24 @@ stop_apps
 # Peel the bind mount (and whatever ZimaOS stacked there) off SRC_DATA until
 # the data drive itself is the one mounted there.
 while drive_is_mounted "$SRC_DATA" && [ "$(drive_mount_source "$SRC_DATA")" != "$data_dev" ]; do
-    run umount -l "$SRC_DATA" || { log "ABORT: cannot unmount $SRC_DATA"; exit 1; }
+    run umount -l "$SRC_DATA" || {
+        log "ABORT: cannot unmount $SRC_DATA"
+        exit 1
+    }
     [ "$DRY_RUN" = 1 ] && break
 done
 if ! drive_is_mounted "$SRC_DATA"; then
     run mkdir -p "$SRC_DATA"
-    run mount "UUID=$DATA_UUID" "$SRC_DATA" || { log "ABORT: cannot mount the data drive at $SRC_DATA"; exit 1; }
+    run mount "UUID=$DATA_UUID" "$SRC_DATA" || {
+        log "ABORT: cannot mount the data drive at $SRC_DATA"
+        exit 1
+    }
 fi
 if [ "$DRY_RUN" != 1 ] && ! drive_is_rw "$SRC_DATA"; then
-    run mount -o remount,rw "$SRC_DATA" || { log "ABORT: $SRC_DATA is read-only"; exit 1; }
+    run mount -o remount,rw "$SRC_DATA" || {
+        log "ABORT: $SRC_DATA is read-only"
+        exit 1
+    }
 fi
 
 if [ "$DRY_RUN" = 1 ]; then
@@ -136,7 +157,7 @@ if [ "${MIRROR_DETACH:-no}" = yes ]; then
     drive_detach "$MIRROR_UUID" || log "WARN: could not detach the backup drive"
 fi
 
-secs=$(( $(date +%s) - START ))
+secs=$(($(date +%s) - START))
 log "=== Failback finished in $(printf '%02d:%02d:%02d' $((secs / 3600)) $(((secs % 3600) / 60)) $((secs % 60))) ==="
 notify "✅ FAILBACK DONE — $(hostname)
 
