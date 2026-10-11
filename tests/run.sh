@@ -25,6 +25,8 @@ setup() {
     T=$(mktemp -d)
     export SYSFS="$T/sys" DEVFS="$T/dev" STATE_DIR="$T/state"
     export FAKE_MOUNTS="$T/mounts" FAKE_CALLS="$T/calls"
+    # ATTACH_TIMEOUT is in whole seconds, so tests where the disk comes back
+    # asynchronously raise it: with 1s the deadline can be a few ms away.
     export DRY_RUN=0 POLL=0 ATTACH_TIMEOUT=1 MOUNT_WAIT=0 HEALTH_TIMEOUT=5
     : > "$FAKE_MOUNTS"
     : > "$FAKE_CALLS"
@@ -266,7 +268,7 @@ test_failover_attaches_detached_mirror_before_switching() {
     # the disk "comes back" on rescan: fake it by replugging as soon as scan is written
     ( while [[ "$(cat "$SYSFS/class/scsi_host/host2/scan")" != "- - -" ]]; do sleep 0.05; done; replug "$MIRROR_UUID" sdd ) &
     CFG_THRESHOLD=1 write_config
-    check; rc=$?
+    ATTACH_TIMEOUT=5 check; rc=$?
     wait
     assert_eq 0 "$rc" "exit"
     assert_calls "^mount UUID=$MIRROR_UUID $MIRROR$"
@@ -337,7 +339,7 @@ test_backup_attaches_mirrors_and_detaches() {
     unplug "$MIRROR_UUID"
     : > "$FAKE_CALLS"
     ( while [[ "$(cat "$SYSFS/class/scsi_host/host2/scan")" != "- - -" ]]; do sleep 0.05; done; replug "$MIRROR_UUID" sdd ) &
-    "$REPO/zimaos/backup.sh"; rc=$?
+    ATTACH_TIMEOUT=5 "$REPO/zimaos/backup.sh"; rc=$?
     wait
     assert_eq 0 "$rc" "exit"
     assert_eq "mount UUID=$MIRROR_UUID $MIRROR
