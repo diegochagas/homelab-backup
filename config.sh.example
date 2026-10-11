@@ -46,6 +46,26 @@ FOLDERS=(
 )
 
 ########################################
+# Push Linux Mint data to ZimaOS
+#
+# Optional reverse direction, run after
+# the pull on full runs: PUSH_SOURCE on
+# this machine is mirrored (rsync
+# --delete) onto PUSH_TARGET, a drive
+# mounted on the ZimaOS server. Leave
+# PUSH_SOURCE empty to disable.
+# PUSH_EXCLUDES are top-level folders of
+# PUSH_SOURCE to skip (e.g. the folder
+# that holds the ZimaOS backup itself).
+########################################
+
+PUSH_SOURCE=""
+PUSH_TARGET="/media/YOUR-OTHER-DRIVE"
+PUSH_EXCLUDES=(
+    "backup"
+)
+
+########################################
 # Logging
 ########################################
 

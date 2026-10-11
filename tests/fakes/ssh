@@ -1,0 +1,19 @@
+#!/bin/sh
+# Fake ssh for the Linux Mint backup.sh: answers the remote one-liners it runs.
+# FAKE_REMOTE_MOUNTS lists the mounted remote paths; FAKE_REMOTE_USED/AVAIL feed df.
+cmd=
+while [ $# -gt 0 ]; do cmd=$1; shift; done # the remote command is the last argument
+echo "ssh $cmd" >> "$FAKE_CALLS"
+case $cmd in
+    "echo Connected") echo Connected ;;
+    stat*) date +%s ;;
+    "[ -d "*) exit 0 ;;
+    du\ -sh*) echo 1.0K ;;
+    du\ -sb*) echo 1024 ;;
+    mountpoint*)
+        t=$(echo "$cmd" | sed 's/.*mountpoint -q "\(.*\)".*/\1/')
+        for m in ${FAKE_REMOTE_MOUNTS:-}; do [ "$m" = "$t" ] && exit 0; done
+        exit 1 ;;
+    df*) echo "${FAKE_REMOTE_USED:-0} ${FAKE_REMOTE_AVAIL:-1000000000}" ;;
+    *) echo "fake ssh: unexpected command: $cmd" >&2; exit 99 ;;
+esac

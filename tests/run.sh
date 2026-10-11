@@ -445,6 +445,94 @@ test_failback_asks_for_typed_confirmation() {
     assert_no_calls "^docker"
 }
 
+# --- Linux Mint backup.sh (push stage) -------------------------------------
+
+# A copy of backup.sh in a temp dir with its own config.sh (it sources
+# $SCRIPT_DIR/config.sh), talking to the fake ssh/rsync.
+mint_setup() {
+    MINT="$T/mint"
+    mkdir -p "$MINT/logs" "$T/mnt/data/nextcloud" "$T/mnt/data/backup" "$T/local-backup"
+    echo data > "$T/mnt/data/nextcloud/file"
+    cp "$REPO/backup.sh" "$MINT/backup.sh"
+    cat > "$MINT/config.sh" <<EOF
+REMOTE_HOST="zimaos.test"
+REMOTE_USER="user"
+SSH_PORT=22
+REMOTE_ROOT="/media/DATA"
+REMOTE_APPDATA="/DATA/AppData"
+APPS="app1"
+LOCAL_BACKUP="$T/local-backup"
+FOLDERS=( "Backups" )
+LOG_DIR="$MINT/logs"
+SERVER_BACKUP_LOG="/media/DATA/Backups/backup.log"
+MAX_SERVER_BACKUP_AGE_HOURS=48
+PUSH_SOURCE="${CFG_PUSH_SOURCE-$T/mnt/data}"
+PUSH_TARGET="/media/MINT"
+PUSH_EXCLUDES=( "backup" )
+EOF
+    export FAKE_REMOTE_MOUNTS="/media/MINT" FAKE_REMOTE_USED=0 FAKE_REMOTE_AVAIL=1000000000
+}
+
+mint() { (cd "$MINT" && ./backup.sh "$@"); }
+
+test_mint_full_run_pushes_after_the_pull() {
+    mint_setup
+    out=$(mint); rc=$?
+    assert_eq 0 "$rc" "exit"
+    assert_eq "rsync -a --human-readable --delete --rsync-path=sudo /usr/bin/rsync --info=progress2,name0 user@zimaos.test:/media/DATA/Backups/ $T/local-backup/Backups/
+rsync -a --human-readable --delete --rsync-path=sudo /usr/bin/rsync --info=progress2,name0 --exclude /.zimaos_storage.json --exclude /lost+found --exclude /backup $T/mnt/data/ user@zimaos.test:/media/MINT/" "$(grep ^rsync "$FAKE_CALLS")" "pull then push"
+    assert_contains "$out" "Pushing $T/mnt/data to ZimaOS"
+    [[ $out =~ Excluded:[[:space:]]+backup ]] || fail "excluded list not printed"
+    assert_contains "$out" "$T/mnt/data → ZimaOS:/media/MINT"
+}
+
+test_mint_folder_run_skips_the_push() {
+    mint_setup
+    mint --folder Backups > /dev/null || fail "exit"
+    assert_no_calls "^rsync.*/media/MINT/"
+}
+
+test_mint_push_disabled_when_source_empty() {
+    CFG_PUSH_SOURCE='' mint_setup
+    out=$(mint) || fail "exit"
+    assert_no_calls "^rsync.*/media/MINT/"
+    assert_no_calls "^ssh mountpoint"
+    ! [[ $out == *Pushing* ]] || fail "push section printed"
+}
+
+test_mint_push_refuses_unmounted_target() {
+    mint_setup
+    FAKE_REMOTE_MOUNTS=""
+    out=$(mint); rc=$?
+    assert_eq 1 "$rc" "exit"
+    assert_contains "$out" "/media/MINT is not a mounted drive on ZimaOS"
+    assert_no_calls "^rsync.*/media/MINT/"
+    assert_calls "^rsync.*Backups/$" # the pull still happened
+}
+
+test_mint_push_refuses_when_target_is_too_small() {
+    mint_setup
+    FAKE_REMOTE_AVAIL=1
+    out=$(mint); rc=$?
+    assert_eq 1 "$rc" "exit"
+    assert_contains "$out" "Not enough space on /media/MINT"
+    assert_no_calls "^rsync.*/media/MINT/"
+}
+
+test_mint_push_counts_what_is_already_on_the_target() {
+    mint_setup
+    # avail is tiny but the target already holds (more than) the data: fits
+    FAKE_REMOTE_AVAIL=1 FAKE_REMOTE_USED=100000000
+    mint > /dev/null || fail "exit"
+    assert_calls "^rsync.*/media/MINT/"
+}
+
+test_mint_dry_run_pushes_with_n() {
+    mint_setup
+    mint --dry-run > /dev/null || fail "exit"
+    assert_calls "^rsync -a --human-readable --delete --rsync-path=sudo /usr/bin/rsync -n --stats --exclude /.zimaos_storage.json --exclude /lost\\+found --exclude /backup $T/mnt/data/ user@zimaos.test:/media/MINT/$"
+}
+
 # --- run ------------------------------------------------------------------
 
 echo "homelab-backup tests"

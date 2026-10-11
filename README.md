@@ -361,6 +361,16 @@ enclosure and USB port.
 ./backup.sh --folder Gallery
 ```
 
+### Push this machine's data to ZimaOS
+
+With `PUSH_SOURCE` set in `config.sh`, every full run ends by mirroring that
+folder (`rsync --delete`, minus `PUSH_EXCLUDES`) onto `PUSH_TARGET`, a drive
+mounted on the ZimaOS server — so the workstation's own data (Nextcloud sync
+folder, projects, VMs…) has an off-machine copy too. The push refuses to run
+unless `PUSH_TARGET` is a mounted drive (a missing disk must not turn into a
+copy on the ZimaOS system drive) and checks the free space first.
+`--folder` runs skip it; `--dry-run` previews it.
+
 ### Simulate a backup
 
 Dry Run allows you to verify everything that will happen without copying or deleting any files.

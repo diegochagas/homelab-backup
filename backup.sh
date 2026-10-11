@@ -16,8 +16,13 @@ readonly SCRIPT_DIR
 # Load configuration
 source "$SCRIPT_DIR/config.sh"
 
-readonly VERSION="2.0.0"
+readonly VERSION="2.1.0"
 readonly REMOTE="$REMOTE_USER@$REMOTE_HOST"
+
+# Optional reverse push (Linux Mint -> ZimaOS), see config.sh.example.
+PUSH_SOURCE="${PUSH_SOURCE:-}"
+PUSH_TARGET="${PUSH_TARGET:-}"
+[[ -v PUSH_EXCLUDES ]] || declare -a PUSH_EXCLUDES=()
 START_TIME=$(date +%s)
 readonly START_TIME
 
@@ -191,7 +196,7 @@ Usage:
     ./backup.sh [options]
 
 Options:
-    --folder <name>     Backup only one folder.
+    --folder <name>     Backup only one folder (skips the push to ZimaOS).
     --dry-run           Simulate the backup.
     --help              Show help.
     --version           Show version.
@@ -552,6 +557,115 @@ backup_folder() {
 }
 
 ########################################
+# Pushes PUSH_SOURCE (this workstation's
+# data) onto PUSH_TARGET on the ZimaOS
+# server after the pull - the reverse
+# direction, so the workstation's data
+# also has an off-machine copy. Skipped
+# when PUSH_SOURCE is empty.
+#
+# Refuses to run unless PUSH_TARGET is a
+# mounted drive on the server: with the
+# disk gone, rsync would fill the ZimaOS
+# system drive instead.
+########################################
+push_local_data() {
+    [[ -n "$PUSH_SOURCE" ]] || return 0
+
+    local label="$PUSH_SOURCE → ZimaOS:$PUSH_TARGET"
+    print_section "Pushing $PUSH_SOURCE to ZimaOS"
+
+    local start_time
+    start_time=$(date +%s)
+
+    if [[ -z "$PUSH_TARGET" ]]; then
+        print_info "❌ PUSH_TARGET is not set in config.sh"
+        SUMMARY+=("$label|-|❌ Failed")
+        return 1
+    fi
+
+    if [[ ! -d "$PUSH_SOURCE" ]]; then
+        print_info "❌ Local folder not found: $PUSH_SOURCE"
+        SUMMARY+=("$label|-|❌ Failed")
+        return 1
+    fi
+
+    if ! ssh -p "$SSH_PORT" "$REMOTE" "mountpoint -q \"$PUSH_TARGET\""; then
+        print_info "❌ $PUSH_TARGET is not a mounted drive on ZimaOS"
+        SUMMARY+=("$label|-|❌ Failed")
+        return 1
+    fi
+
+    # ZimaOS keeps its mount record (.zimaos_storage.json) at the root of
+    # every drive it manages; --delete must never remove it, nor lost+found.
+    local excludes=(--exclude /.zimaos_storage.json --exclude /lost+found)
+    local du_excludes=()
+    for item in "${PUSH_EXCLUDES[@]}"; do
+        excludes+=(--exclude "/$item")
+        du_excludes+=(--exclude "$PUSH_SOURCE/$item")
+    done
+
+    local required
+    required=$(du -sb "${du_excludes[@]}" "$PUSH_SOURCE" 2>/dev/null | cut -f1)
+    local size
+    size=$(numfmt --to=iec "$required")
+    print_field "   Size:" "$size"
+    if [[ ${#PUSH_EXCLUDES[@]} -gt 0 ]]; then
+        print_field "Excluded:" "${PUSH_EXCLUDES[*]}"
+    fi
+
+    # The drive is dedicated to this push, so what is already there will be
+    # replaced: only the growth has to fit in the remaining space.
+    local remote_used remote_avail
+    read -r remote_used remote_avail < <(ssh -p "$SSH_PORT" "$REMOTE" \
+        "df -B1 --output=used,avail \"$PUSH_TARGET\" | tail -n 1")
+    if (( required - remote_used > remote_avail )); then
+        print_field "  Status:" "❌ Not enough space on $PUSH_TARGET ($(numfmt --to=iec "$remote_avail") free)"
+        SUMMARY+=("$label|$size|❌ Failed")
+        return 1
+    fi
+
+    local options=(
+        -a
+        --human-readable
+        --delete
+        --rsync-path="sudo /usr/bin/rsync"
+    )
+
+    if [[ "$DRY_RUN" == true ]]; then
+        options+=(
+            -n
+            --stats
+        )
+    else
+        # shellcheck disable=SC2054 # one rsync flag, the comma is part of it
+        options+=(
+            --info=progress2,name0
+        )
+
+        print_info
+        print_info "Synchronizing..."
+    fi
+
+    local rc=0
+    rsync "${options[@]}" "${excludes[@]}" "$PUSH_SOURCE/" "$REMOTE:$PUSH_TARGET/" || rc=$?
+
+    if [[ "$rc" -eq 0 || "$rc" -eq 24 ]]; then
+        print_field "  Status:" "✅ OK"
+        SUMMARY+=("$label|$size|✅ OK")
+    else
+        print_field "  Status:" "❌ Failed"
+        SUMMARY+=("$label|$size|❌ Failed")
+        return 1
+    fi
+
+    local end_time
+    end_time=$(date +%s)
+    echo
+    print_field "Completed in:" "$(format_time "$((end_time - start_time))")"
+}
+
+########################################
 # Main
 ########################################
 
@@ -636,6 +750,11 @@ main() {
     for folder in "${SELECTED[@]}"; do
         backup_folder "$folder" || exit 1
     done
+
+    # A single --folder run is a partial backup; the push belongs to full runs.
+    if [[ "$TARGET" == "all" ]]; then
+        push_local_data || exit 1
+    fi
 
     local end_time
     end_time=$(date +%s)
