@@ -1,0 +1,27 @@
+#!/bin/sh
+# Fake findmnt driven by $FAKE_MOUNTS: one mount per line "TARGET SOURCE OPTIONS",
+# later lines are stacked on top of earlier ones at the same target.
+col=
+dev=
+target=
+while [ $# -gt 0 ]; do
+    case $1 in
+        -n | -rn) ;;
+        -no | -rno) col=$2; shift ;;
+        -S) dev=$2; shift ;;
+        *) target=$1 ;;
+    esac
+    shift
+done
+[ -f "$FAKE_MOUNTS" ] || exit 1
+if [ -n "$dev" ]; then
+    awk -v d="$dev" '$2 == d { print $1 }' "$FAKE_MOUNTS"
+    exit 0
+fi
+line=$(awk -v t="$target" '$1 == t' "$FAKE_MOUNTS" | tail -1)
+[ -n "$line" ] || exit 1
+case $col in
+    OPTIONS) echo "$line" | awk '{ print $3 }' ;;
+    SOURCE) echo "$line" | awk '{ print $2 }' ;;
+    *) echo "$line" ;;
+esac

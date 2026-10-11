@@ -1,0 +1,6 @@
+#!/bin/sh
+echo "umount $*" >> "$FAKE_CALLS"
+[ "$1" = -l ] && shift
+# Drop the top-most mount at this target (the last matching line).
+awk -v t="$1" '{ l[NR] = $0; if ($1 == t) last = NR } END { if (!last) exit 1; for (i = 1; i <= NR; i++) if (i != last) print l[i] }' "$FAKE_MOUNTS" > "$FAKE_MOUNTS.tmp" || { rm -f "$FAKE_MOUNTS.tmp"; exit 32; }
+mv "$FAKE_MOUNTS.tmp" "$FAKE_MOUNTS"

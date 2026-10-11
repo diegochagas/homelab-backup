@@ -1,0 +1,9 @@
+[Unit]
+Description=Data-drive watchdog with failover to the backup drive (homelab-backup)
+After=docker.service zimaos-local-storage.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=@BACKUP_DIR@/zimaos
+ExecStart=@BACKUP_DIR@/zimaos/failover-check.sh

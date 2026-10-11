@@ -12,14 +12,16 @@ trap 'handle_error $? $LINENO "$BASH_COMMAND"' ERR
 ########################################
 
 # Get the directory where this script is located
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
 
 # Load configuration
 source "$SCRIPT_DIR/config.sh"
 
 readonly VERSION="1.0.0"
 readonly REMOTE="$REMOTE_USER@$REMOTE_HOST"
-readonly START_TIME=$(date +%s)
+START_TIME=$(date +%s)
+readonly START_TIME
 
 ########################################
 # Runtime options
@@ -422,6 +424,7 @@ push_path() {
             --stats
         )
     else
+        # shellcheck disable=SC2054 # one rsync flag, the comma is part of it
         options+=(
             --info=progress2,name0
         )
@@ -454,7 +457,8 @@ restore_appdata() {
     check_local_source "Backups/AppData"
     check_disk_space "$LOCAL_BACKUP/Backups/AppData" "$REMOTE_APPDATA"
 
-    local start_time=$(date +%s)
+    local start_time
+    start_time=$(date +%s)
     local apps_stopped=false
 
     restart_remote_apps() {
@@ -477,8 +481,10 @@ restore_appdata() {
     restart_remote_apps
     trap - EXIT
 
-    local end_time=$(date +%s)
-    local elapsed=$((end_time - start_time))
+    local end_time
+    end_time=$(date +%s)
+    local elapsed
+    elapsed=$((end_time - start_time))
 
     echo
     print_field "Completed in:" "$(format_time "$elapsed")"
@@ -499,12 +505,15 @@ restore_folder() {
     check_local_source "$folder"
     check_disk_space "$LOCAL_BACKUP/$folder" "$REMOTE_ROOT"
 
-    local start_time=$(date +%s)
+    local start_time
+    start_time=$(date +%s)
 
     push_path "$folder" "$REMOTE_ROOT/$folder" "$folder" || return 1
 
-    local end_time=$(date +%s)
-    local elapsed=$((end_time - start_time))
+    local end_time
+    end_time=$(date +%s)
+    local elapsed
+    elapsed=$((end_time - start_time))
 
     echo
     print_field "Completed in:" "$(format_time "$elapsed")"
@@ -569,8 +578,10 @@ main() {
         restore_target "$target" || exit 1
     done
 
-    local end_time=$(date +%s)
-    local elapsed=$((end_time - START_TIME))
+    local end_time
+    end_time=$(date +%s)
+    local elapsed
+    elapsed=$((end_time - START_TIME))
 
     echo
     print_info "🎉 Restore completed!"

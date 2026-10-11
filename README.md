@@ -104,7 +104,16 @@ homelab-backup/
 │
 ├── zimaos/
 │   ├── backup.sh               # Stage 1: runs on the ZimaOS server itself
+│   ├── failover-check.sh       # Data-drive watchdog: fails over to the backup drive
+│   ├── failback.sh             # Manual: switch back after a failover
+│   ├── lib/drive.sh            # Attach/detach/health helpers shared by the three
+│   ├── install-timer.sh        # Installs the root systemd timers on ZimaOS
+│   ├── homelab-backup.service / .timer
+│   ├── homelab-failover.service / .timer
 │   └── config.sh.example
+│
+├── scripts/check               # lint + tests (pre-push hook and CI run this)
+├── tests/                      # run.sh + fake /sys, /dev and system commands
 │
 ├── notify.sh                   # Telegram message helper used by the scripts
 ├── telegram.env.example
@@ -148,6 +157,7 @@ Required commands:
 - du
 - df
 - lsblk *(mirror-to-external.sh only)*
+- findmnt, flock *(zimaos/ scripts)*; hdparm *(optional, spins the detached backup drive down)*
 
 ---
 
@@ -213,12 +223,12 @@ or trigger a run immediately with `systemctl --user start homelab-backup.service
 
 ## ZimaOS side (zimaos/backup.sh)
 
-Copy `zimaos/` onto the ZimaOS server (e.g. `scp -r zimaos/ diegochagas@192.168.15.8:~/backup/`), then on the server:
+Clone the repo onto the ZimaOS server (somewhere persistent, e.g. under `/DATA`), then on the server:
 
 ```bash
-cd backup
-cp config.sh.example config.sh
-nano config.sh
+cd homelab-backup
+cp zimaos/config.sh.example zimaos/config.sh
+nano zimaos/config.sh
 ```
 
 Schedule it with the included systemd timer, run daily before `backup.sh`'s
@@ -235,6 +245,10 @@ timer under `/etc/systemd/system` instead, which persists, and removes any
 matching crontab entry so the job doesn't fire twice. Check it any time with
 `systemctl status homelab-backup.service homelab-backup.timer` or trigger a
 run immediately with `sudo systemctl start homelab-backup.service`.
+
+With `FAILOVER_ENABLED="yes"` in `zimaos/config.sh`, `install-timer.sh` also
+installs `homelab-failover.timer` (every 5 minutes, see below); rerun it after
+changing that setting.
 
 ## Telegram notifications (optional)
 
@@ -270,8 +284,67 @@ which reads this project's logs.
 Stops the configured app containers, mirrors `/DATA/AppData` onto the external
 drive, restarts the containers, mirrors `/DATA/Projects` (gitignored files like
 `.env.docker` only exist there) onto the external drive, then mirrors the whole
-external drive onto a second drive. Intended to run via cron on the ZimaOS box
-itself.
+external drive onto a second drive. Runs from the root systemd timer on the ZimaOS box
+itself. It refuses to run while a failover is active (see below) and when the
+data drive is mounted read-only.
+
+### Detached backup drive
+
+With `MIRROR_UUID` set and `MIRROR_DETACH="yes"`, the second drive is only
+online during the backup. After the mirror pass `backup.sh` unmounts it, spins
+it down (`hdparm -Y`, best effort), deletes its SCSI device and lets the USB
+port autosuspend — the enclosure stays plugged in, but the OS no longer sees
+the disk, so nothing (a stray `rm`, a bad sync, ransomware) can touch it and
+the platters rest. The next run rescans the SCSI host the drive hung off
+(recorded in `STATE_DIR`), waits for ZimaOS to auto-mount it and mirrors again.
+After a reboot the drive comes back on its own and is detached again at the
+end of the next backup.
+
+### Failover
+
+With `FAILOVER_ENABLED="yes"`, `failover-check.sh` runs every 5 minutes as
+root and checks the data drive (`SRC_DATA`):
+
+| State | Meaning | Action |
+|---|---|---|
+| `OK` | mounted rw, a read + write succeeded | — (a Telegram "OK again" when recovering) |
+| `RO` / `UNMOUNTED` | disk present but not usable | Telegram alert only — it's a mount problem, not a dead disk |
+| `MISSING` / `IOERR` | disk gone, or a read/write failed or stalled | counts; after `FAIL_THRESHOLD` checks in a row → failover |
+
+Failover stops the `APPS` containers, lazily unmounts the dead drive, brings
+the backup drive back (attaching it if it was detached), bind-mounts it at
+`SRC_DATA` so every container finds its usual paths, starts the containers
+again and writes `STATE_DIR/failover.active`. Anything written after the last
+nightly backup is lost; nightly backups are paused (`backup.sh` refuses to run,
+otherwise it would mirror the wrong way). If the backup drive doesn't come
+back the apps are **left stopped**: with nothing mounted at `SRC_DATA` they
+would write into the system drive instead.
+
+While `failover.active` exists the watchdog keeps the backup drive at
+`SRC_DATA` — also after a reboot, when ZimaOS mounts the drives back at their
+own paths — and sends one Telegram message when a drive with `DATA_UUID` shows
+up again. Plug a replacement in only when you are ready to fail back: the
+watchdog restarts the apps to keep them on the backup drive whenever something
+else lands on `SRC_DATA`.
+
+Switching back is manual:
+
+```bash
+# new disk: format it ext4 with the same label, put its UUID in zimaos/config.sh
+sudo ./zimaos/failback.sh --dry-run
+sudo ./zimaos/failback.sh          # asks you to type "failback"
+```
+
+It stops the apps, puts the data drive back at `SRC_DATA`, copies the backup
+drive onto it (`rsync --delete`, hours for a few TB), clears the flag, starts
+the apps and detaches the backup drive again.
+
+All three scripts take `DRY_RUN=1` (or `--dry-run` for `failback.sh`) and print
+what they would do without touching mounts, containers, sysfs or state files.
+Hardware matters here: when both drives share one enclosure or USB bridge,
+the most likely failures (bridge, cable, power brick) take both offline at
+once and failover has nothing to switch to — keep the backup drive on its own
+enclosure and USB port.
 
 ## Stage 2 — Pull to Linux Mint
 
@@ -570,6 +643,22 @@ Each function has a single responsibility, making the project easy to maintain a
 - [ ] Backup verification
 - [ ] Configuration validation
 - [ ] Optional parallel backups
+
+---
+
+# Development
+
+```bash
+scripts/check                              # shellcheck + shfmt (if installed) + tests
+tests/run.sh failover                      # only tests matching "failover"
+git config core.hooksPath .githooks        # run scripts/check before every push
+```
+
+The tests in `tests/run.sh` exercise `zimaos/lib/drive.sh`, `backup.sh`,
+`failover-check.sh` and `failback.sh` against a fake `/sys`, `/dev` and fake
+`findmnt`/`mount`/`umount`/`docker`/`rsync`/`hdparm` (in `tests/fakes/`), so
+they never touch the machine running them and never send Telegram messages.
+GitHub Actions runs the same `scripts/check`.
 
 ---
 

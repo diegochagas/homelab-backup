@@ -39,3 +39,36 @@ MIRROR_EXCLUDE="nc-skeleton"
 # SRC_APPDATA (for filesystem-consistent
 # copies) and restarted right after.
 APPS="vaultwarden jellyfin qbittorrent nextcloud immich-server immich-postgres postgresql"
+
+########################################
+# Detached backup drive + failover
+# (optional; everything below is
+# ignored while the UUIDs are empty)
+########################################
+
+# Filesystem UUIDs of the two drives:
+#   blkid -o value -s UUID /dev/sdX
+DATA_UUID=""
+MIRROR_UUID=""
+
+# Persistent folder for the scripts'
+# state (lock, failover flag, where the
+# detached drive hangs). Must survive
+# reboots, so keep it off /var.
+STATE_DIR="/DATA/AppData/homelab-backup"
+
+# yes: after the nightly mirror the
+# backup drive is detached (unmounted,
+# spun down, removed from the OS) and
+# only re-attached for the next run.
+MIRROR_DETACH="no"
+
+# yes: install-timer.sh also installs
+# the failover watchdog (every 5 min).
+# When the data drive disappears or
+# stops answering FAIL_THRESHOLD checks
+# in a row, the apps are stopped, the
+# backup drive is bind-mounted at
+# SRC_DATA and the apps restarted.
+FAILOVER_ENABLED="no"
+FAIL_THRESHOLD="3"

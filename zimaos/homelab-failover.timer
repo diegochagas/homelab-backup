@@ -1,0 +1,11 @@
+[Unit]
+Description=Check the data drive every 5 minutes
+
+[Timer]
+# Give ZimaOS time to mount the drives and Docker time to start the apps.
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

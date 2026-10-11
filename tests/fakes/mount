@@ -1,0 +1,15 @@
+#!/bin/sh
+echo "mount $*" >> "$FAKE_CALLS"
+case $1 in
+    --bind)
+        src=$(awk -v t="$2" '$1 == t { s = $2 } END { print s }' "$FAKE_MOUNTS")
+        echo "$3 $src rw,bind" >> "$FAKE_MOUNTS" ;;
+    -o)
+        # mount -o remount,rw TARGET
+        awk -v t="$3" -v o="$2" '$1 == t { $3 = (o ~ /rw/) ? "rw,relatime" : "ro,relatime" } { print }' "$FAKE_MOUNTS" > "$FAKE_MOUNTS.tmp"
+        mv "$FAKE_MOUNTS.tmp" "$FAKE_MOUNTS" ;;
+    UUID=*)
+        dev=$(readlink -f "$DEVFS/disk/by-uuid/${1#UUID=}") || exit 32
+        echo "$2 $dev rw,relatime" >> "$FAKE_MOUNTS" ;;
+    *) exit 32 ;;
+esac

@@ -1,0 +1,2 @@
+#!/bin/sh
+echo "hdparm${*:+ $*}" >> "$FAKE_CALLS"

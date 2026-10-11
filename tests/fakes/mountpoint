@@ -1,0 +1,3 @@
+#!/bin/sh
+[ "$1" = -q ] && shift
+awk -v t="$1" '$1 == t { found = 1 } END { exit !found }' "$FAKE_MOUNTS"

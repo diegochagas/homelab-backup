@@ -14,7 +14,8 @@ trap 'handle_error $? $LINENO "$BASH_COMMAND"' ERR
 # is on the drive that isn't in the source gets removed.
 ########################################
 
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
 
 source "$SCRIPT_DIR/config.sh"
 
@@ -401,6 +402,7 @@ run_mirror() {
     if [[ "$DRY_RUN" == true ]]; then
         options+=(-n --stats)
     else
+        # shellcheck disable=SC2054 # one rsync flag, the comma is part of it
         options+=(--info=progress2,name0)
         print_info "Syncing..."
     fi

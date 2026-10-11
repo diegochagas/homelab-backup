@@ -1,0 +1,3 @@
+#!/bin/sh
+echo "rsync${*:+ $*}" >> "$FAKE_CALLS"
+exit "${FAKE_RSYNC_RC:-0}"

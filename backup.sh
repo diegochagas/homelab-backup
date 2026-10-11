@@ -10,14 +10,16 @@ trap 'handle_error $? $LINENO "$BASH_COMMAND"' ERR
 ########################################
 
 # Get the directory where this script is located
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
 
 # Load configuration
 source "$SCRIPT_DIR/config.sh"
 
 readonly VERSION="2.0.0"
 readonly REMOTE="$REMOTE_USER@$REMOTE_HOST"
-readonly START_TIME=$(date +%s)
+START_TIME=$(date +%s)
+readonly START_TIME
 
 ########################################
 # Runtime options
@@ -293,7 +295,8 @@ check_server_backup_freshness() {
         return 0
     fi
 
-    local age_hours=$(( ($(date +%s) - log_mtime) / 3600 ))
+    local age_hours
+    age_hours=$(( ($(date +%s) - log_mtime) / 3600 ))
 
     if (( age_hours > MAX_SERVER_BACKUP_AGE_HOURS )); then
         print_info "⚠️  WARNING: server-side backup is ${age_hours}h old ($((age_hours / 24)) days)"
@@ -496,6 +499,7 @@ sync_folder() {
             --stats
         )
     else
+        # shellcheck disable=SC2054 # one rsync flag, the comma is part of it
         options+=(
             --info=progress2,name0
         )
@@ -533,12 +537,15 @@ backup_folder() {
 
     print_section "Backing up $folder"
 
-    local start_time=$(date +%s)
+    local start_time
+    start_time=$(date +%s)
 
     sync_folder "$folder" || return 1
 
-    local end_time=$(date +%s)
-    local elapsed=$((end_time - start_time))
+    local end_time
+    end_time=$(date +%s)
+    local elapsed
+    elapsed=$((end_time - start_time))
 
     echo
     print_field "Completed in:" "$(format_time "$elapsed")"
@@ -630,8 +637,10 @@ main() {
         backup_folder "$folder" || exit 1
     done
 
-    local end_time=$(date +%s)
-    local elapsed=$((end_time - START_TIME))
+    local end_time
+    end_time=$(date +%s)
+    local elapsed
+    elapsed=$((end_time - START_TIME))
 
     echo
     print_info "🎉 Backup completed!"
