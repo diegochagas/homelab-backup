@@ -7,10 +7,12 @@ Shell only, no build step. The ZimaOS-side scripts (`zimaos/`) are POSIX `sh`
 
 - `scripts/check` is the gate: shellcheck (zero warnings — an explicit
   `# shellcheck disable=` needs a reason), shfmt when installed, `tests/run.sh`.
-- Every change to `zimaos/` logic gets a test in `tests/run.sh`. Tests run
-  against a fake `/sys`, `/dev` and the fake commands in `tests/fakes/`; add a
-  fake rather than letting a test reach the real system. Set `TELEGRAM_ENV`
-  to a missing file (run.sh already does) so `notify.sh` stays silent.
+- Every change to `zimaos/` logic or to a workstation script gets a test in
+  `tests/run.sh`. Tests run against a fake `/sys`, `/dev` and the fake commands
+  in `tests/fakes/` (the workstation scripts are copied to a temp dir with
+  `lib/` and a test `config.sh` by `mint_setup`); add a fake rather than
+  letting a test reach the real system. Set `TELEGRAM_ENV` to a missing file
+  (run.sh already does) so `notify.sh` stays silent.
 - Risk class: data deletion / system changes. Scenario tests cover: rsync
   failure mid-run (apps restarted, drive detached, flag kept), backup drive
   missing at failover (apps left stopped), reboot during failover, dry runs
@@ -29,11 +31,13 @@ Revert the commit and rerun `sudo ./zimaos/install-timer.sh` on the server
 Language: bash on the workstation, POSIX `sh` under `zimaos/`. Formatter: `shfmt -i 4 -ci`
 (run by `scripts/check`); don't discuss style.
 
-- Functions 4–20 lines, one verb each. Files ≤300 lines, hard max 500: `backup.sh` and `restore.sh`
-  are over and get split into sourced `lib/*.sh` (like `zimaos/lib/drive.sh`) when a change touches them,
-  with `tests/run.sh` green before and after. `scripts/clean-code-audit` in `scripts/check` reports the
-  30 long functions (report only until clean, then `--strict`).
-- One responsibility per file: one script per stage (see the README chain), shared helpers in `lib/`.
+- Functions 4–20 lines, one verb each. Files ≤300 lines, hard max 500. The workstation scripts are
+  thin entry points over sourced `lib/*.sh` (like `zimaos/lib/drive.sh`); `scripts/clean-code-audit
+  --strict` in `scripts/check` fails on any function or file over the limit. A heredoc-only help
+  function opts out with `# clean-code-audit: allow-long -- <reason>` on the line above it.
+- One responsibility per file: one script per stage (see the README chain), shared helpers in `lib/`
+  (`output`, `logging`, `config-loader`, `remote`, `transfer`, `disk-space`, `telegram`, `arguments`,
+  `preflight`, `summary`), script-specific stages in `lib/backup-*.sh` / `lib/restore-*.sh`.
 - Names specific and searchable (<5 grep hits): `drive_detach`, `restore_appdata`, not `run`, `do_it`, `tmp`.
 - Validate every input and config value (`[ -n "$X" ]`, numeric checks, paths exist) before using it;
   missing config → clear message and non-zero exit.
