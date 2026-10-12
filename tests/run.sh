@@ -490,8 +490,12 @@ mint_setup() {
     mkdir -p "$MINT/logs" "$T/mnt/data/nextcloud" "$T/mnt/data/backup" "$T/local-backup/Backups/AppData"
     echo data >"$T/mnt/data/nextcloud/file"
     echo appdata >"$T/local-backup/Backups/AppData/file"
-    cp "$REPO/backup.sh" "$REPO/restore.sh" "$REPO/mirror-to-external.sh" "$MINT/"
+    cp "$REPO/backup.sh" "$REPO/restore.sh" "$REPO/mirror-to-external.sh" "$REPO/push-exif-fixes.sh" "$MINT/"
     cp -r "$REPO/lib" "$MINT/lib"
+    mkdir -p "$MINT/exif-fixes" "$T/local-backup/Gallery"
+    printf 'a.jpg\nb.jpg\nmissing.jpg\n' >"$MINT/exif-fixes/relpaths.txt"
+    echo a >"$T/local-backup/Gallery/a.jpg"
+    echo b >"$T/local-backup/Gallery/b.jpg"
     cat >"$MINT/profiles.conf" <<EOF
 PROFILES=(
     "nextcloud|local|$T/mnt/data/nextcloud|Nextcloud data"
@@ -727,6 +731,49 @@ test_mirror_requires_a_known_profile() {
     rc=$?
     assert_eq 1 "$rc" "exit on unknown option"
     assert_contains "$out" "Run './mirror-to-external.sh --help'"
+}
+
+# --- Linux Mint push-exif-fixes.sh ------------------------------------------
+
+mint_push_exif() { (cd "$MINT" && ./push-exif-fixes.sh "$@"); }
+
+test_push_exif_dry_run_pushes_only_the_listed_files() {
+    mint_setup
+    out=$(mint_push_exif --dry-run)
+    rc=$?
+    assert_eq 0 "$rc" "exit"
+    assert_calls "^rsync -a --human-readable --rsync-path=sudo /usr/bin/rsync --files-from=$MINT/exif-fixes/relpaths.txt -n --stats $T/local-backup/Gallery/ user@zimaos.test:/media/DATA/Gallery/$"
+    assert_contains "$out" "Not found locally, skipping: missing.jpg"
+    [[ $out =~ Missing\ locally:[[:space:]]+1 ]] || fail "missing count not printed"
+    assert_no_calls "docker"
+}
+
+test_push_exif_stop_immich_restarts_it_even_when_rsync_fails() {
+    mint_setup
+    FAKE_RSYNC_RC=23 mint_push_exif --yes --stop-immich >/dev/null 2>&1
+    rc=$?
+    assert_eq 1 "$rc" "exit"
+    assert_calls '^ssh for c in immich-server immich-postgres; do docker stop'
+    assert_calls '^ssh for c in immich-postgres immich-server; do docker start'
+}
+
+test_push_exif_asks_for_typed_confirmation() {
+    mint_setup
+    out=$(printf 'no\n' | mint_push_exif 2>&1)
+    rc=$?
+    assert_eq 1 "$rc" "exit"
+    assert_contains "$out" "Aborted"
+    assert_no_calls "^rsync"
+}
+
+test_push_exif_requires_the_file_list() {
+    mint_setup
+    : >"$MINT/exif-fixes/relpaths.txt"
+    out=$(mint_push_exif --dry-run 2>&1)
+    rc=$?
+    assert_eq 1 "$rc" "exit"
+    assert_contains "$out" "Missing or empty file list"
+    assert_no_calls "^rsync"
 }
 
 # --- run ------------------------------------------------------------------
