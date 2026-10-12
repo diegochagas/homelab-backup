@@ -33,13 +33,6 @@ EOF
 }
 
 ########################################
-# Prints the current version.
-########################################
-print_version() {
-    echo "$VERSION"
-}
-
-########################################
 # Parses command-line arguments.
 #
 # Options:

@@ -3,8 +3,8 @@
 # --folder/--target name against the configured list and the usage hint
 # printed on a bad argument. Sourced, never executed.
 #
-# Expects from the entry script: SCRIPT_NAME (e.g. backup.sh), TARGET and
-# the SELECTED array.
+# Expects from the entry script: SCRIPT_NAME (e.g. backup.sh), VERSION,
+# TARGET and the SELECTED array.
 
 ########################################
 # Resolves the --folder argument into
@@ -51,6 +51,14 @@ exit_unknown_target() {
     done
 
     exit 1
+}
+
+########################################
+# Prints the current version.
+########################################
+#   --version) print_version && exit 0 ;;
+print_version() {
+    echo "$VERSION"
 }
 
 # Prints the "--help" hint after an unknown argument and exits 1.

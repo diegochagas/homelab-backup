@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Unit + scenario tests for zimaos/lib/drive.sh, failover-check.sh,
-# failback.sh and backup.sh, run against a fake /sys, /dev and fake system
-# commands (tests/fakes) in a temp dir - nothing on the real machine is
-# touched and no Telegram message is sent.
+# failback.sh and backup.sh, plus the Linux Mint backup.sh and restore.sh
+# (with lib/), run against a fake /sys, /dev and fake system commands
+# (tests/fakes) in a temp dir - nothing on the real machine is touched and
+# no Telegram message is sent.
 #
 #   tests/run.sh        # all
 #   tests/run.sh attach # only tests whose name contains "attach"
@@ -480,13 +481,15 @@ test_failback_asks_for_typed_confirmation() {
 
 # --- Linux Mint backup.sh (push stage) -------------------------------------
 
-# A copy of backup.sh and lib/ in a temp dir with its own config.sh (the
-# scripts source $SCRIPT_DIR/config.sh), talking to the fake ssh/rsync.
+# A copy of backup.sh, restore.sh and lib/ in a temp dir with its own
+# config.sh (the scripts source $SCRIPT_DIR/config.sh), talking to the fake
+# ssh/rsync. local-backup holds a previous pull for restore.sh to push.
 mint_setup() {
     MINT="$T/mint"
-    mkdir -p "$MINT/logs" "$T/mnt/data/nextcloud" "$T/mnt/data/backup" "$T/local-backup"
+    mkdir -p "$MINT/logs" "$T/mnt/data/nextcloud" "$T/mnt/data/backup" "$T/local-backup/Backups/AppData"
     echo data >"$T/mnt/data/nextcloud/file"
-    cp "$REPO/backup.sh" "$MINT/backup.sh"
+    echo appdata >"$T/local-backup/Backups/AppData/file"
+    cp "$REPO/backup.sh" "$REPO/restore.sh" "$MINT/"
     cp -r "$REPO/lib" "$MINT/lib"
     cat >"$MINT/config.sh" <<EOF
 REMOTE_HOST="zimaos.test"
@@ -508,6 +511,17 @@ EOF
 }
 
 mint() { (cd "$MINT" && ./backup.sh "$@"); }
+mint_restore() { (cd "$MINT" && ./restore.sh "$@"); }
+
+test_mint_requires_config() {
+    mint_setup
+    rm "$MINT/config.sh"
+    out=$(mint 2>&1)
+    rc=$?
+    assert_eq 1 "$rc" "exit"
+    assert_contains "$out" "Missing $MINT/config.sh"
+    assert_eq "" "$(cat "$FAKE_CALLS")" "no calls"
+}
 
 test_mint_full_run_pushes_after_the_pull() {
     mint_setup
@@ -568,6 +582,80 @@ test_mint_dry_run_pushes_with_n() {
     mint_setup
     mint --dry-run >/dev/null || fail "exit"
     assert_calls "^rsync -a --human-readable --delete --rsync-path=sudo /usr/bin/rsync -n --stats --exclude /.zimaos_storage.json --exclude /lost\\+found --exclude /backup $T/mnt/data/ user@zimaos.test:/media/MINT/$"
+}
+
+# --- Linux Mint restore.sh --------------------------------------------------
+
+test_restore_dry_run_adds_without_delete_and_leaves_apps_running() {
+    mint_setup
+    out=$(mint_restore --dry-run)
+    rc=$?
+    assert_eq 0 "$rc" "exit"
+    assert_calls "^rsync -a --human-readable --rsync-path=sudo /usr/bin/rsync -n --stats $T/local-backup/Backups/AppData/ user@zimaos.test:/DATA/AppData/$"
+    assert_calls "^rsync -a --human-readable --rsync-path=sudo /usr/bin/rsync -n --stats $T/local-backup/Backups/ user@zimaos.test:/media/DATA/Backups/$"
+    assert_no_calls "docker"
+    assert_no_calls "[-]-delete"
+    assert_contains "$out" "Restoring AppData -> /DATA/AppData"
+    assert_contains "$out" "Restoring Backups -> /media/DATA/Backups"
+}
+
+test_restore_delete_flag_mirrors_exactly() {
+    mint_setup
+    mint_restore --yes --delete --target Backups >/dev/null || fail "exit"
+    assert_calls "^rsync -a --human-readable --rsync-path=sudo /usr/bin/rsync --delete --info=progress2,name0 $T/local-backup/Backups/ user@zimaos.test:/media/DATA/Backups/$"
+}
+
+test_restore_appdata_stops_and_restarts_apps_around_the_push() {
+    mint_setup
+    mint_restore --yes --target appdata >/dev/null || fail "exit"
+    assert_eq "ssh echo Connected
+ssh df -B1 --output=avail \"/DATA/AppData\" 2>/dev/null | tail -n 1
+ssh for c in app1; do docker stop \"\$c\" || true; done
+ssh sudo mkdir -p '/DATA/AppData'
+rsync -a --human-readable --rsync-path=sudo /usr/bin/rsync --info=progress2,name0 $T/local-backup/Backups/AppData/ user@zimaos.test:/DATA/AppData/
+ssh for c in app1; do docker start \"\$c\" || true; done" "$(cat "$FAKE_CALLS")" "call sequence"
+}
+
+test_restore_restarts_apps_when_rsync_fails() {
+    mint_setup
+    FAKE_RSYNC_RC=23 mint_restore --yes --target appdata >/dev/null 2>&1
+    rc=$?
+    assert_eq 1 "$rc" "exit"
+    assert_calls "^ssh for c in app1; do docker stop"
+    assert_calls "^ssh for c in app1; do docker start" # the EXIT trap, after main's exit 1
+}
+
+test_restore_refuses_empty_local_source() {
+    mint_setup
+    rm -r "$T/local-backup/Backups/AppData"
+    out=$(mint_restore --yes --target appdata 2>&1)
+    rc=$?
+    assert_eq 1 "$rc" "exit"
+    assert_contains "$out" "Local source is missing or empty: $T/local-backup/Backups/AppData"
+    assert_no_calls "^rsync"
+    assert_no_calls "docker"
+}
+
+test_restore_asks_for_typed_confirmation() {
+    mint_setup
+    out=$(printf 'no\n' | mint_restore --target Backups 2>&1)
+    rc=$?
+    assert_eq 1 "$rc" "exit"
+    assert_contains "$out" "Aborted"
+    assert_no_calls "^rsync"
+}
+
+test_restore_rejects_unknown_target_and_argument() {
+    mint_setup
+    out=$(mint_restore --target Nope 2>&1)
+    rc=$?
+    assert_eq 1 "$rc" "exit on unknown target"
+    assert_contains "$out" "Unknown target: Nope"
+    assert_contains "$out" "  appdata"
+    out=$(mint_restore --bogus 2>&1)
+    rc=$?
+    assert_eq 1 "$rc" "exit on unknown argument"
+    assert_contains "$out" "Run './restore.sh --help'"
 }
 
 # --- run ------------------------------------------------------------------
