@@ -23,3 +23,29 @@ Shell only, no build step. The ZimaOS-side scripts (`zimaos/`) are POSIX `sh`
 
 Revert the commit and rerun `sudo ./zimaos/install-timer.sh` on the server
 (it re-installs or removes the failover timer according to `config.sh`).
+
+## Clean code (dev-playbook CLEAN-CODE.md)
+
+Language: bash on the workstation, POSIX `sh` under `zimaos/`. Formatter: `shfmt -i 4 -ci`
+(run by `scripts/check`); don't discuss style.
+
+- Functions 4–20 lines, one verb each. Files ≤300 lines, hard max 500: `backup.sh` and `restore.sh`
+  are over and get split into sourced `lib/*.sh` (like `zimaos/lib/drive.sh`) when a change touches them,
+  with `tests/run.sh` green before and after. `scripts/clean-code-audit` in `scripts/check` reports the
+  30 long functions (report only until clean, then `--strict`).
+- One responsibility per file: one script per stage (see the README chain), shared helpers in `lib/`.
+- Names specific and searchable (<5 grep hits): `drive_detach`, `restore_appdata`, not `run`, `do_it`, `tmp`.
+- Validate every input and config value (`[ -n "$X" ]`, numeric checks, paths exist) before using it;
+  missing config → clear message and non-zero exit.
+- Early returns / guard clauses, max 2 nested levels. Extract duplicated rsync/ssh invocations into one helper.
+- Errors name the offending value and the expected shape (`BACKUP_DEST "/mnt/x" is not a mounted directory`).
+- Comments: keep the ones you find (they record ZimaOS quirks). Write WHY, cite issue numbers / SHAs.
+  Each function gets a one-line header comment with its purpose and an example call.
+- External commands (rsync, ssh, docker, flock, notify) go through thin wrapper functions so `tests/fakes/`
+  can replace them; no test touches the real system.
+- Logging: plain text lines prefixed with the stage name (these are CLIs read by a human and Telegram).
+- Defensive code this repo needs (flag anything else instead of adding it silently): lock file against
+  concurrent runs (flock, as in `zimaos/backup.sh`); free-space check before copying; never delete the last
+  verified-good copy; never write into the source; restart apps even when rsync fails; Telegram notify on failure.
+- README keeps "The Backup Chain" diagram current; update it when the shape changes.
+- `scripts/check` is the single validation command.

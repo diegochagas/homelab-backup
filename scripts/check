@@ -19,3 +19,6 @@ fi
 
 echo "== tests"
 tests/run.sh
+
+echo "== clean-code audit (report only until the long functions are split)"
+scripts/clean-code-audit
