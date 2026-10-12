@@ -25,15 +25,15 @@ load_config() {
 # Sources profiles.conf (mirror-to-external.sh's PROFILES array).
 #   load_profiles
 load_profiles() {
-    local profiles="$SCRIPT_DIR/profiles.conf"
+    local profiles_file="$SCRIPT_DIR/profiles.conf"
 
-    if [[ ! -f "$profiles" ]]; then
-        echo "❌ Missing $profiles - copy profiles.conf.example and adjust it." >&2
+    if [[ ! -f "$profiles_file" ]]; then
+        echo "❌ Missing $profiles_file - copy profiles.conf.example and adjust it." >&2
         exit 1
     fi
 
     # shellcheck source=/dev/null # gitignored, absent in CI
-    source "$profiles"
+    source "$profiles_file"
 }
 
 # Exits with a clear message when a config variable is unset or empty (for an

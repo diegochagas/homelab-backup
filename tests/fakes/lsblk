@@ -1,0 +1,4 @@
+#!/bin/sh
+# Fake lsblk -P for mirror-to-external.sh: prints $FAKE_LSBLK, one
+# NAME="..." LABEL="..." MOUNTPOINT="..." RM="..." TYPE="..." line per device.
+printf '%s\n' "${FAKE_LSBLK:-}"
