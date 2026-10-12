@@ -9,6 +9,9 @@ Example:
     scripts/clean-code-audit                 # report, always exits 0
     scripts/clean-code-audit --strict        # fail scripts/check on any violation
     scripts/clean-code-audit --max-file-lines 300 lib/   # tighter, one folder
+
+A bash function whose body is only a heredoc (help text) may opt out with the
+comment line right above it: `# clean-code-audit: allow-long -- heredoc help text`.
 """
 
 from __future__ import annotations
@@ -24,6 +27,10 @@ SOURCE_SUFFIXES = {".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".py", ".sh", "
 SKIPPED_DIR_PARTS = {"node_modules", ".next", "dist", "build", "vendor", "coverage", "public", "__snapshots__"}
 TEST_MARKERS = ("tests/", "__tests__/", "e2e/", ".test.", ".spec.", "_test.py", "test_")
 BASH_FUNCTION_START = re.compile(r"^(?:function\s+)?([A-Za-z_][A-Za-z0-9_:-]*)\s*\(\)\s*\{\s*$")
+# Opt-out for a function that is only a heredoc (help text): the comment line
+# right above `name() {` reads `# clean-code-audit: allow-long -- <reason>`,
+# mirroring `# shellcheck disable=... # reason`. The reason is mandatory.
+ALLOW_LONG_DIRECTIVE = re.compile(r"^\s*#\s*clean-code-audit:\s*allow-long\s+--\s+\S")
 
 
 def tracked_source_files(roots: list[str], include_tests: bool) -> list[Path]:
@@ -69,15 +76,18 @@ def long_python_functions(path: Path, limit: int) -> list[tuple[str, int, int]]:
 def long_bash_functions(path: Path, limit: int) -> list[tuple[str, int, int]]:
     """(name, line, length) for top-level `name() {` ... `}` blocks longer than limit."""
     found = []
-    current_name, start_line = None, 0
+    current_name, start_line, allowed = None, 0, False
+    previous_line = ""
     for number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
         match = BASH_FUNCTION_START.match(line)
         if match:
             current_name, start_line = match.group(1), number
+            allowed = bool(ALLOW_LONG_DIRECTIVE.match(previous_line))
         elif line.rstrip() == "}" and current_name:
-            if number - start_line > limit:
+            if number - start_line > limit and not allowed:
                 found.append((current_name, start_line, number - start_line))
             current_name = None
+        previous_line = line
     return found
 
 
