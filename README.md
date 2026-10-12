@@ -96,6 +96,20 @@ homelab-backup/
 ├── backup.sh                  # Stage 2: pull ZimaOS -> Linux Mint
 ├── restore.sh                 # Stage 3: push Linux Mint -> ZimaOS (DR)
 ├── mirror-to-external.sh      # Ad-hoc: mirror a profile onto an external drive
+├── push-exif-fixes.sh         # One-off: push the Gallery files listed in exif-fixes/
+├── lib/                       # Sourced by the four scripts above, one responsibility each
+│   ├── output.sh               # print_* helpers (console + log)
+│   ├── logging.sh              # log file lifecycle, handle_error (ERR trap)
+│   ├── config-loader.sh        # config.sh / profiles.conf loading and validation
+│   ├── remote.sh               # ssh wrappers: every remote command, docker stop/start
+│   ├── transfer.sh             # rsync wrappers: option list, dry-run flags, results
+│   ├── disk-space.sh           # du/df helpers and the "does it fit" check
+│   ├── telegram.sh             # notify.sh wrapper
+│   ├── arguments.sh            # --folder/--target resolution, --version, usage hint
+│   ├── preflight.sh            # dependency and ssh checks
+│   ├── summary.sh              # end-of-run summary
+│   ├── backup-*.sh             # backup.sh stages: cli, checks, pull, push, report
+│   └── restore-*.sh            # restore.sh stages: cli, targets, appdata
 ├── install-timer.sh           # Installs backup.sh as a systemd --user timer
 ├── homelab-backup.service      # Unit template used by install-timer.sh
 ├── homelab-backup.timer        # Unit template used by install-timer.sh
@@ -112,7 +126,8 @@ homelab-backup/
 │   ├── homelab-failover.service / .timer
 │   └── config.sh.example
 │
-├── scripts/check               # lint + tests (pre-push hook and CI run this)
+├── scripts/check               # lint + tests + clean-code audit (pre-push hook and CI run this)
+├── scripts/clean-code-audit    # files > 500 lines / functions > 20 lines fail the check
 ├── tests/                      # run.sh + fake /sys, /dev and system commands
 │
 ├── notify.sh                   # Telegram message helper used by the scripts
@@ -664,10 +679,21 @@ tests/run.sh failover                      # only tests matching "failover"
 git config core.hooksPath .githooks        # run scripts/check before every push
 ```
 
-The tests in `tests/run.sh` exercise `zimaos/lib/drive.sh`, `backup.sh`,
-`failover-check.sh` and `failback.sh` against a fake `/sys`, `/dev` and fake
-`findmnt`/`mount`/`umount`/`docker`/`rsync`/`hdparm` (in `tests/fakes/`), so
-they never touch the machine running them and never send Telegram messages.
+The tests in `tests/run.sh` exercise `zimaos/lib/drive.sh`, `zimaos/backup.sh`,
+`failover-check.sh` and `failback.sh`, plus the Linux Mint `backup.sh`,
+`restore.sh`, `mirror-to-external.sh` and `push-exif-fixes.sh` (copied to a
+temp dir with their `lib/` and a test config), against a fake `/sys`, `/dev`
+and fake `findmnt`/`mount`/`umount`/`docker`/`rsync`/`ssh`/`lsblk`/`df`/`hdparm`
+(in `tests/fakes/`), so they never touch the machine running them, never reach
+the server and never send Telegram messages.
+
+The workstation scripts are thin entry points over `lib/*.sh`; every external
+command (`ssh`, `rsync`, `docker` on the server, `notify.sh`) goes through a
+wrapper in `lib/remote.sh`, `lib/transfer.sh` or `lib/telegram.sh`, which is
+what lets the fakes stand in. `scripts/clean-code-audit --strict` (part of
+`scripts/check`) fails on functions over 20 lines or files over 500 lines; a
+heredoc-only help function opts out with the comment line
+`# clean-code-audit: allow-long -- heredoc help text` right above it.
 GitHub Actions runs the same `scripts/check`.
 
 ---

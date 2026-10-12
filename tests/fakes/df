@@ -1,0 +1,15 @@
+#!/bin/sh
+# Fake df: answers --output=avail|size|used,avail with FAKE_DF_* bytes, so a
+# test never depends on the real filesystem's free space (or on a mountpoint
+# that exists only in the fake lsblk output).
+out=
+for arg in "$@"; do
+    case $arg in
+        --output=*) out=${arg#--output=} ;;
+    esac
+done
+case $out in
+    avail) echo "${FAKE_DF_AVAIL:-1000000000}" ;;
+    size) echo "${FAKE_DF_SIZE:-2000000000}" ;;
+    *) echo "${FAKE_DF_USED:-0} ${FAKE_DF_AVAIL:-1000000000}" ;;
+esac

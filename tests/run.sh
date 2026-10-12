@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Unit + scenario tests for zimaos/lib/drive.sh, failover-check.sh,
-# failback.sh and backup.sh, run against a fake /sys, /dev and fake system
-# commands (tests/fakes) in a temp dir - nothing on the real machine is
-# touched and no Telegram message is sent.
+# failback.sh and backup.sh, plus the Linux Mint backup.sh and restore.sh
+# (with lib/), run against a fake /sys, /dev and fake system commands
+# (tests/fakes) in a temp dir - nothing on the real machine is touched and
+# no Telegram message is sent.
 #
 #   tests/run.sh        # all
 #   tests/run.sh attach # only tests whose name contains "attach"
@@ -480,13 +481,28 @@ test_failback_asks_for_typed_confirmation() {
 
 # --- Linux Mint backup.sh (push stage) -------------------------------------
 
-# A copy of backup.sh in a temp dir with its own config.sh (it sources
-# $SCRIPT_DIR/config.sh), talking to the fake ssh/rsync.
+# A copy of the workstation scripts and lib/ in a temp dir with their own
+# config.sh and profiles.conf (the scripts source $SCRIPT_DIR/config.sh),
+# talking to the fake ssh/rsync/lsblk/df. local-backup holds a previous
+# pull for restore.sh to push.
 mint_setup() {
     MINT="$T/mint"
-    mkdir -p "$MINT/logs" "$T/mnt/data/nextcloud" "$T/mnt/data/backup" "$T/local-backup"
+    mkdir -p "$MINT/logs" "$T/mnt/data/nextcloud" "$T/mnt/data/backup" "$T/local-backup/Backups/AppData"
     echo data >"$T/mnt/data/nextcloud/file"
-    cp "$REPO/backup.sh" "$MINT/backup.sh"
+    echo appdata >"$T/local-backup/Backups/AppData/file"
+    cp "$REPO/backup.sh" "$REPO/restore.sh" "$REPO/mirror-to-external.sh" "$REPO/push-exif-fixes.sh" "$MINT/"
+    cp -r "$REPO/lib" "$MINT/lib"
+    mkdir -p "$MINT/exif-fixes" "$T/local-backup/Gallery"
+    printf 'a.jpg\nb.jpg\nmissing.jpg\n' >"$MINT/exif-fixes/relpaths.txt"
+    echo a >"$T/local-backup/Gallery/a.jpg"
+    echo b >"$T/local-backup/Gallery/b.jpg"
+    cat >"$MINT/profiles.conf" <<EOF
+PROFILES=(
+    "nextcloud|local|$T/mnt/data/nextcloud|Nextcloud data"
+    "media|remote|/media/DATA/Media|Media library on ZimaOS"
+)
+EOF
+    export FAKE_LSBLK='NAME="sdz1" LABEL="EXT" MOUNTPOINT="/media/user/EXT" RM="1" TYPE="part"'
     cat >"$MINT/config.sh" <<EOF
 REMOTE_HOST="zimaos.test"
 REMOTE_USER="user"
@@ -507,6 +523,17 @@ EOF
 }
 
 mint() { (cd "$MINT" && ./backup.sh "$@"); }
+mint_restore() { (cd "$MINT" && ./restore.sh "$@"); }
+
+test_mint_requires_config() {
+    mint_setup
+    rm "$MINT/config.sh"
+    out=$(mint 2>&1)
+    rc=$?
+    assert_eq 1 "$rc" "exit"
+    assert_contains "$out" "Missing $MINT/config.sh"
+    assert_eq "" "$(cat "$FAKE_CALLS")" "no calls"
+}
 
 test_mint_full_run_pushes_after_the_pull() {
     mint_setup
@@ -567,6 +594,186 @@ test_mint_dry_run_pushes_with_n() {
     mint_setup
     mint --dry-run >/dev/null || fail "exit"
     assert_calls "^rsync -a --human-readable --delete --rsync-path=sudo /usr/bin/rsync -n --stats --exclude /.zimaos_storage.json --exclude /lost\\+found --exclude /backup $T/mnt/data/ user@zimaos.test:/media/MINT/$"
+}
+
+# --- Linux Mint restore.sh --------------------------------------------------
+
+test_restore_dry_run_adds_without_delete_and_leaves_apps_running() {
+    mint_setup
+    out=$(mint_restore --dry-run)
+    rc=$?
+    assert_eq 0 "$rc" "exit"
+    assert_calls "^rsync -a --human-readable --rsync-path=sudo /usr/bin/rsync -n --stats $T/local-backup/Backups/AppData/ user@zimaos.test:/DATA/AppData/$"
+    assert_calls "^rsync -a --human-readable --rsync-path=sudo /usr/bin/rsync -n --stats $T/local-backup/Backups/ user@zimaos.test:/media/DATA/Backups/$"
+    assert_no_calls "docker"
+    assert_no_calls "[-]-delete"
+    assert_contains "$out" "Restoring AppData -> /DATA/AppData"
+    assert_contains "$out" "Restoring Backups -> /media/DATA/Backups"
+}
+
+test_restore_delete_flag_mirrors_exactly() {
+    mint_setup
+    mint_restore --yes --delete --target Backups >/dev/null || fail "exit"
+    assert_calls "^rsync -a --human-readable --rsync-path=sudo /usr/bin/rsync --delete --info=progress2,name0 $T/local-backup/Backups/ user@zimaos.test:/media/DATA/Backups/$"
+}
+
+test_restore_appdata_stops_and_restarts_apps_around_the_push() {
+    mint_setup
+    mint_restore --yes --target appdata >/dev/null || fail "exit"
+    assert_eq "ssh echo Connected
+ssh df -B1 --output=avail \"/DATA/AppData\" 2>/dev/null | tail -n 1
+ssh for c in app1; do docker stop \"\$c\" || true; done
+ssh sudo mkdir -p '/DATA/AppData'
+rsync -a --human-readable --rsync-path=sudo /usr/bin/rsync --info=progress2,name0 $T/local-backup/Backups/AppData/ user@zimaos.test:/DATA/AppData/
+ssh for c in app1; do docker start \"\$c\" || true; done" "$(cat "$FAKE_CALLS")" "call sequence"
+}
+
+test_restore_restarts_apps_when_rsync_fails() {
+    mint_setup
+    FAKE_RSYNC_RC=23 mint_restore --yes --target appdata >/dev/null 2>&1
+    rc=$?
+    assert_eq 1 "$rc" "exit"
+    assert_calls "^ssh for c in app1; do docker stop"
+    assert_calls "^ssh for c in app1; do docker start" # the EXIT trap, after main's exit 1
+}
+
+test_restore_refuses_empty_local_source() {
+    mint_setup
+    rm -r "$T/local-backup/Backups/AppData"
+    out=$(mint_restore --yes --target appdata 2>&1)
+    rc=$?
+    assert_eq 1 "$rc" "exit"
+    assert_contains "$out" "Local source is missing or empty: $T/local-backup/Backups/AppData"
+    assert_no_calls "^rsync"
+    assert_no_calls "docker"
+}
+
+test_restore_asks_for_typed_confirmation() {
+    mint_setup
+    out=$(printf 'no\n' | mint_restore --target Backups 2>&1)
+    rc=$?
+    assert_eq 1 "$rc" "exit"
+    assert_contains "$out" "Aborted"
+    assert_no_calls "^rsync"
+}
+
+test_restore_rejects_unknown_target_and_argument() {
+    mint_setup
+    out=$(mint_restore --target Nope 2>&1)
+    rc=$?
+    assert_eq 1 "$rc" "exit on unknown target"
+    assert_contains "$out" "Unknown target: Nope"
+    assert_contains "$out" "  appdata"
+    out=$(mint_restore --bogus 2>&1)
+    rc=$?
+    assert_eq 1 "$rc" "exit on unknown argument"
+    assert_contains "$out" "Run './restore.sh --help'"
+}
+
+# --- Linux Mint mirror-to-external.sh -------------------------------------
+
+mint_mirror() { (cd "$MINT" && ./mirror-to-external.sh "$@"); }
+
+test_mirror_dry_run_mirrors_local_profile_with_delete_and_n() {
+    mint_setup
+    out=$(mint_mirror nextcloud --dry-run)
+    rc=$?
+    assert_eq 0 "$rc" "exit"
+    assert_eq "rsync -a --human-readable --delete -n --stats $T/mnt/data/nextcloud/ /media/user/EXT/" "$(cat "$FAKE_CALLS")" "calls"
+    assert_contains "$out" "ABOUT TO ERASE: /media/user/EXT (device sdz1, label 'EXT')"
+}
+
+test_mirror_remote_profile_reads_through_sudo_rsync_after_typed_label() {
+    mint_setup
+    printf 'EXT\n' | mint_mirror media >/dev/null || fail "exit"
+    assert_calls "^ssh \[ -d '/media/DATA/Media' \]$"
+    assert_calls "^rsync -a --human-readable --delete --info=progress2,name0 --rsync-path=sudo /usr/bin/rsync user@zimaos.test:/media/DATA/Media/ /media/user/EXT/$"
+}
+
+test_mirror_aborts_on_wrong_label_or_too_small_drive() {
+    mint_setup
+    out=$(printf 'nope\n' | mint_mirror nextcloud 2>&1)
+    rc=$?
+    assert_eq 1 "$rc" "exit on wrong label"
+    assert_contains "$out" "Aborted"
+    assert_no_calls "^rsync"
+    out=$(FAKE_DF_SIZE=1 mint_mirror nextcloud --dry-run 2>&1)
+    rc=$?
+    assert_eq 1 "$rc" "exit on small drive"
+    assert_contains "$out" "Drive is too small"
+    assert_no_calls "^rsync"
+}
+
+test_mirror_only_offers_removable_drives_mounted_under_media() {
+    mint_setup
+    FAKE_LSBLK='NAME="sda1" LABEL="root" MOUNTPOINT="/" RM="0" TYPE="part"
+NAME="sdz1" LABEL="EXT" MOUNTPOINT="" RM="1" TYPE="part"
+NAME="sdy1" LABEL="USB" MOUNTPOINT="/mnt/usb" RM="1" TYPE="part"'
+    out=$(mint_mirror nextcloud --dry-run 2>&1)
+    rc=$?
+    assert_eq 1 "$rc" "exit"
+    assert_contains "$out" "No mounted external drive found"
+    assert_no_calls "^rsync"
+}
+
+test_mirror_requires_a_known_profile() {
+    mint_setup
+    out=$(mint_mirror 2>&1)
+    rc=$?
+    assert_eq 1 "$rc" "exit without arguments"
+    assert_contains "$out" "Usage:"
+    out=$(mint_mirror nope --dry-run 2>&1)
+    rc=$?
+    assert_eq 1 "$rc" "exit on unknown profile"
+    assert_contains "$out" "Unknown profile: nope"
+    assert_contains "$out" "nextcloud"
+    out=$(mint_mirror --bogus 2>&1)
+    rc=$?
+    assert_eq 1 "$rc" "exit on unknown option"
+    assert_contains "$out" "Run './mirror-to-external.sh --help'"
+}
+
+# --- Linux Mint push-exif-fixes.sh ------------------------------------------
+
+mint_push_exif() { (cd "$MINT" && ./push-exif-fixes.sh "$@"); }
+
+test_push_exif_dry_run_pushes_only_the_listed_files() {
+    mint_setup
+    out=$(mint_push_exif --dry-run)
+    rc=$?
+    assert_eq 0 "$rc" "exit"
+    assert_calls "^rsync -a --human-readable --rsync-path=sudo /usr/bin/rsync --files-from=$MINT/exif-fixes/relpaths.txt -n --stats $T/local-backup/Gallery/ user@zimaos.test:/media/DATA/Gallery/$"
+    assert_contains "$out" "Not found locally, skipping: missing.jpg"
+    [[ $out =~ Missing\ locally:[[:space:]]+1 ]] || fail "missing count not printed"
+    assert_no_calls "docker"
+}
+
+test_push_exif_stop_immich_restarts_it_even_when_rsync_fails() {
+    mint_setup
+    FAKE_RSYNC_RC=23 mint_push_exif --yes --stop-immich >/dev/null 2>&1
+    rc=$?
+    assert_eq 1 "$rc" "exit"
+    assert_calls '^ssh for c in immich-server immich-postgres; do docker stop'
+    assert_calls '^ssh for c in immich-postgres immich-server; do docker start'
+}
+
+test_push_exif_asks_for_typed_confirmation() {
+    mint_setup
+    out=$(printf 'no\n' | mint_push_exif 2>&1)
+    rc=$?
+    assert_eq 1 "$rc" "exit"
+    assert_contains "$out" "Aborted"
+    assert_no_calls "^rsync"
+}
+
+test_push_exif_requires_the_file_list() {
+    mint_setup
+    : >"$MINT/exif-fixes/relpaths.txt"
+    out=$(mint_push_exif --dry-run 2>&1)
+    rc=$?
+    assert_eq 1 "$rc" "exit"
+    assert_contains "$out" "Missing or empty file list"
+    assert_no_calls "^rsync"
 }
 
 # --- run ------------------------------------------------------------------

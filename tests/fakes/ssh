@@ -1,6 +1,7 @@
 #!/bin/sh
-# Fake ssh for the Linux Mint backup.sh: answers the remote one-liners it runs.
-# FAKE_REMOTE_MOUNTS lists the mounted remote paths; FAKE_REMOTE_USED/AVAIL feed df.
+# Fake ssh for the Linux Mint backup.sh / restore.sh: answers the remote
+# one-liners they run (lib/remote.sh). FAKE_REMOTE_MOUNTS lists the mounted
+# remote paths; FAKE_REMOTE_USED/AVAIL feed df.
 cmd=
 while [ $# -gt 0 ]; do cmd=$1; shift; done # the remote command is the last argument
 echo "ssh $cmd" >> "$FAKE_CALLS"
@@ -14,6 +15,9 @@ case $cmd in
         t=$(echo "$cmd" | sed 's/.*mountpoint -q "\(.*\)".*/\1/')
         for m in ${FAKE_REMOTE_MOUNTS:-}; do [ "$m" = "$t" ] && exit 0; done
         exit 1 ;;
+    df*--output=avail*) echo "${FAKE_REMOTE_AVAIL:-1000000000}" ;;
     df*) echo "${FAKE_REMOTE_USED:-0} ${FAKE_REMOTE_AVAIL:-1000000000}" ;;
+    "sudo mkdir -p "*) exit 0 ;;
+    "for c in "*) exit 0 ;; # docker stop/start loop, recorded above
     *) echo "fake ssh: unexpected command: $cmd" >&2; exit 99 ;;
 esac
