@@ -12,7 +12,7 @@ shellcheck -x -P SCRIPTDIR backup.sh restore.sh mirror-to-external.sh install-ti
 
 if command -v shfmt >/dev/null 2>&1; then
     echo "== shfmt"
-    shfmt -d -i 4 -ci zimaos/lib/drive.sh zimaos/failover-check.sh zimaos/failback.sh tests/run.sh scripts/check
+    shfmt -d -i 4 -ci backup.sh lib/*.sh zimaos/lib/drive.sh zimaos/failover-check.sh zimaos/failback.sh tests/run.sh scripts/check
 else
     echo "== shfmt not installed, skipping"
 fi

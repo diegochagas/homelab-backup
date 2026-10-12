@@ -480,13 +480,14 @@ test_failback_asks_for_typed_confirmation() {
 
 # --- Linux Mint backup.sh (push stage) -------------------------------------
 
-# A copy of backup.sh in a temp dir with its own config.sh (it sources
-# $SCRIPT_DIR/config.sh), talking to the fake ssh/rsync.
+# A copy of backup.sh and lib/ in a temp dir with its own config.sh (the
+# scripts source $SCRIPT_DIR/config.sh), talking to the fake ssh/rsync.
 mint_setup() {
     MINT="$T/mint"
     mkdir -p "$MINT/logs" "$T/mnt/data/nextcloud" "$T/mnt/data/backup" "$T/local-backup"
     echo data >"$T/mnt/data/nextcloud/file"
     cp "$REPO/backup.sh" "$MINT/backup.sh"
+    cp -r "$REPO/lib" "$MINT/lib"
     cat >"$MINT/config.sh" <<EOF
 REMOTE_HOST="zimaos.test"
 REMOTE_USER="user"
