@@ -103,12 +103,18 @@ drive_health() {
         echo RO
         return 0
     }
-    # shellcheck disable=SC2016 # $1 is expanded by the inner sh, on purpose
-    if timeout "$HEALTH_TIMEOUT" sh -c 'ls "$1" > /dev/null && echo ok > "$1/.homelab-health" && rm -f "$1/.homelab-health"' sh "$mnt" >/dev/null 2>&1; then
+    if drive_io_ok "$mnt"; then
         echo OK
     else
         echo IOERR
     fi
+}
+
+# drive_io_ok MOUNTPOINT — true when a listing plus a write+delete finish
+# within HEALTH_TIMEOUT: a dying USB bridge stalls here instead of failing.
+# shellcheck disable=SC2016 # $1 is expanded by the inner sh, on purpose
+drive_io_ok() {
+    timeout "$HEALTH_TIMEOUT" sh -c 'ls "$1" > /dev/null && echo ok > "$1/.homelab-health" && rm -f "$1/.homelab-health"' sh "$1" >/dev/null 2>&1
 }
 
 # drive_detach UUID — hide the drive from the OS (see the header). Records its
@@ -122,25 +128,39 @@ drive_detach() {
     usb=$(drive_usb_dir "$name" 2>/dev/null) || usb=
     host=$(drive_scsi_host "$name" 2>/dev/null) || host=
 
+    drive_unmount_all "$dev" || return 1
+    drive_record_location "$1" "$usb" "$host"
+    drive_power_down "$dev" "$name" "$usb"
+}
+
+# drive_unmount_all DEV — sync, then unmount every mountpoint of the device.
+drive_unmount_all() {
     run sync
-    for t in $(findmnt -rno TARGET -S "$dev" 2>/dev/null); do
+    for t in $(findmnt -rno TARGET -S "$1" 2>/dev/null); do
         # A failed umount is only fatal if the target is really still mounted
         # (peers of a shared mount vanish together, so later ones "fail").
         run umount "$t" 2>/dev/null || ! drive_is_mounted "$t" || return 1
     done
+}
 
-    if [ "$DRY_RUN" != 1 ]; then
-        mkdir -p "$STATE_DIR"
-        printf 'USB_DIR=%s\nSCSI_HOST=%s\n' "$usb" "$host" >"$STATE_DIR/drive-$1"
-    fi
+# drive_record_location UUID USB_DIR SCSI_HOST — remembers where the drive
+# hung off so drive_attach can rescan just that host (not on a dry run).
+drive_record_location() {
+    [ "$DRY_RUN" != 1 ] || return 0
+    mkdir -p "$STATE_DIR"
+    printf 'USB_DIR=%s\nSCSI_HOST=%s\n' "$2" "$3" >"$STATE_DIR/drive-$1"
+}
 
+# drive_power_down DEV NAME USB_DIR — spin the disk down, delete the SCSI
+# device and let the USB port autosuspend.
+drive_power_down() {
     # Best effort: not every USB bridge passes the ATA sleep command through.
     if command -v hdparm >/dev/null 2>&1; then
-        run hdparm -Y "$dev" 2>/dev/null || true
+        run hdparm -Y "$1" 2>/dev/null || true
     fi
-    sysfs_write 1 "$SYSFS/block/$name/device/delete"
-    if [ -n "$usb" ] && [ -w "$usb/power/control" ]; then
-        sysfs_write auto "$usb/power/control"
+    sysfs_write 1 "$SYSFS/block/$2/device/delete"
+    if [ -n "$3" ] && [ -w "$3/power/control" ]; then
+        sysfs_write auto "$3/power/control"
     fi
 }
 
@@ -152,38 +172,56 @@ drive_attach() {
     uuid=$1
     mnt=$2
     if ! drive_dev_by_uuid "$uuid" >/dev/null; then
-        USB_DIR=
-        SCSI_HOST=
-        # shellcheck source=/dev/null
-        [ -f "$STATE_DIR/drive-$uuid" ] && . "$STATE_DIR/drive-$uuid"
-        if [ -n "$USB_DIR" ] && [ -w "$USB_DIR/power/control" ]; then
-            sysfs_write on "$USB_DIR/power/control"
-        fi
-        if [ -n "$SCSI_HOST" ] && [ -e "$SYSFS/class/scsi_host/$SCSI_HOST/scan" ]; then
-            sysfs_write "- - -" "$SYSFS/class/scsi_host/$SCSI_HOST/scan"
-        else
-            for s in "$SYSFS"/class/scsi_host/host*/scan; do
-                [ -e "$s" ] && sysfs_write "- - -" "$s"
-            done
-        fi
-        deadline=$(($(date +%s) + ATTACH_TIMEOUT))
-        until drive_dev_by_uuid "$uuid" >/dev/null; do
-            if [ "$(date +%s)" -ge "$deadline" ]; then
-                echo "drive_attach: no device with UUID $uuid appeared within ${ATTACH_TIMEOUT}s" >&2
-                return 1
-            fi
-            sleep "$POLL"
+        drive_rescan "$uuid"
+        drive_wait_for_device "$uuid" || return 1
+    fi
+    drive_wait_for_mount "$uuid" "$mnt" || return 1
+    [ "$DRY_RUN" = 1 ] || drive_is_mounted "$mnt"
+}
+
+# drive_rescan UUID — wake the recorded USB port and rescan the recorded SCSI
+# host (every host when nothing was recorded) so the deleted disk reappears.
+drive_rescan() {
+    USB_DIR=
+    SCSI_HOST=
+    # shellcheck source=/dev/null
+    [ -f "$STATE_DIR/drive-$1" ] && . "$STATE_DIR/drive-$1"
+    if [ -n "$USB_DIR" ] && [ -w "$USB_DIR/power/control" ]; then
+        sysfs_write on "$USB_DIR/power/control"
+    fi
+    if [ -n "$SCSI_HOST" ] && [ -e "$SYSFS/class/scsi_host/$SCSI_HOST/scan" ]; then
+        sysfs_write "- - -" "$SYSFS/class/scsi_host/$SCSI_HOST/scan"
+    else
+        for s in "$SYSFS"/class/scsi_host/host*/scan; do
+            [ -e "$s" ] && sysfs_write "- - -" "$s"
         done
     fi
+    return 0
+}
 
-    deadline=$(($(date +%s) + MOUNT_WAIT))
-    until drive_is_mounted "$mnt"; do
+# drive_wait_for_device UUID — polls until the block device is back, giving
+# up after ATTACH_TIMEOUT seconds.
+drive_wait_for_device() {
+    deadline=$(($(date +%s) + ATTACH_TIMEOUT))
+    until drive_dev_by_uuid "$1" >/dev/null; do
         if [ "$(date +%s)" -ge "$deadline" ]; then
-            run mkdir -p "$mnt"
-            run mount "UUID=$uuid" "$mnt" || return 1
+            echo "drive_attach: no device with UUID $1 appeared within ${ATTACH_TIMEOUT}s" >&2
+            return 1
+        fi
+        sleep "$POLL"
+    done
+}
+
+# drive_wait_for_mount UUID MOUNTPOINT — gives ZimaOS MOUNT_WAIT seconds to
+# auto-mount the drive, then mounts it itself.
+drive_wait_for_mount() {
+    deadline=$(($(date +%s) + MOUNT_WAIT))
+    until drive_is_mounted "$2"; do
+        if [ "$(date +%s)" -ge "$deadline" ]; then
+            run mkdir -p "$2"
+            run mount "UUID=$1" "$2" || return 1
             break
         fi
         sleep "$POLL"
     done
-    [ "$DRY_RUN" = 1 ] || drive_is_mounted "$mnt"
 }
