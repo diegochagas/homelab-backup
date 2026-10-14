@@ -215,6 +215,12 @@ LOCAL_BACKUP
 FOLDERS
 ```
 
+All configuration paths are specific to the machine that runs the backup. Use
+visible data-volume paths for ordinary backup content and synced files; the
+examples use `/mnt/data`. Reserve the gitignored secret files (such as
+`telegram.env`) for credentials and tokens rather than placing non-secret
+backup configuration in a credentials-only folder.
+
 If you plan to use `mirror-to-external.sh`, also create its profiles file:
 
 ```bash

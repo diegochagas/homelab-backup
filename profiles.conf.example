@@ -14,6 +14,9 @@
 #                          REMOTE_HOST, SSH_PORT from config.sh).
 #   source      Absolute path.
 #   description Shown before the destructive confirmation prompt.
+#
+# Use visible data-volume paths for ordinary files (for example /mnt/data).
+# Keep credentials and tokens in the separate, gitignored configuration files.
 ########################################
 
 PROFILES=(
