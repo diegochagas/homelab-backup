@@ -38,7 +38,7 @@ MIRROR_EXCLUDE="nc-skeleton"
 # Containers stopped before backing up
 # SRC_APPDATA (for filesystem-consistent
 # copies) and restarted right after.
-APPS="vaultwarden jellyfin qbittorrent nextcloud immich-server immich-postgres postgresql"
+APPS="vaultwarden jellyfin qbittorrent nextcloud immich-server immich-postgres postgresql swingmusic"
 
 ########################################
 # Detached backup drive + failover
