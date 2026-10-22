@@ -30,9 +30,9 @@ APPS="vaultwarden jellyfin qbittorrent nextcloud immich-server immich-postgres"
 # Local backup
 ########################################
 
-# Choose a visible data-volume path on this machine. This is backup content,
-# not credential material; do not place it in a credentials-only directory.
-LOCAL_BACKUP="/mnt/data/backup"
+# Folder on this machine that receives the backup. It holds backup
+# content, not credentials, so keep it out of a credentials-only folder.
+LOCAL_BACKUP="/path/to/local/backup"
 
 ########################################
 # Folders

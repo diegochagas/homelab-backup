@@ -15,11 +15,11 @@
 #   source      Absolute path.
 #   description Shown before the destructive confirmation prompt.
 #
-# Use visible data-volume paths for ordinary files (for example /mnt/data).
-# Keep credentials and tokens in the separate, gitignored configuration files.
+# Point sources at ordinary data folders. Keep credentials and tokens in the
+# separate, gitignored configuration files.
 ########################################
 
 PROFILES=(
-    "nextcloud|local|/mnt/data/nextcloud|Nextcloud Desktop Client sync folder"
-    "media|remote|/media/DATA4TB/Media|ZimaOS DATA4TB Media folder"
+    "nextcloud|local|/path/to/nextcloud-sync|Nextcloud Desktop Client sync folder"
+    "media|remote|/media/YOUR-DRIVE/Media|ZimaOS drive Media folder"
 )

@@ -11,25 +11,25 @@
 # Log file. Must live under a path that
 # already exists once DST_APPDATA's
 # parent is created (see backup.sh).
-LOG="/media/DATA4TB/Backups/backup.log"
+LOG="/media/YOUR-DATA-DRIVE/Backups/backup.log"
 
 # Live application data (Docker bind
 # mounts) and where it gets backed up to
 # on the external drive.
 SRC_APPDATA="/DATA/AppData"
-DST_APPDATA="/media/DATA4TB/Backups/AppData"
+DST_APPDATA="/media/YOUR-DATA-DRIVE/Backups/AppData"
 
 # Projects on the system drive (code is
 # on GitHub, but gitignored files like
 # .env.docker only exist here) and where
 # they get backed up to.
 SRC_PROJECTS="/DATA/Projects"
-DST_PROJECTS="/media/DATA4TB/Backups/Projects"
+DST_PROJECTS="/media/YOUR-DATA-DRIVE/Backups/Projects"
 
 # Full external drive and the second
 # drive it gets mirrored to.
-SRC_DATA="/media/DATA4TB"
-DST_MIRROR="/media/BACKUP4TB"
+SRC_DATA="/media/YOUR-DATA-DRIVE"
+DST_MIRROR="/media/YOUR-BACKUP-DRIVE"
 
 # Folder(s) under SRC_DATA to exclude
 # from the SRC_DATA -> DST_MIRROR pass.
