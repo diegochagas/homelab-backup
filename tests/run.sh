@@ -31,8 +31,8 @@ setup() {
     export DRY_RUN=0 POLL=0 ATTACH_TIMEOUT=1 MOUNT_WAIT=0 HEALTH_TIMEOUT=5
     : >"$FAKE_MOUNTS"
     : >"$FAKE_CALLS"
-    DATA="$T/media/DATA4TB"
-    MIRROR="$T/media/BACKUP4TB"
+    DATA="$T/media/DATA-DRIVE"
+    MIRROR="$T/media/BACKUP-DRIVE"
     mkdir -p "$DATA" "$MIRROR" "$T/DATA/AppData" "$T/DATA/Projects" "$STATE_DIR"
     mk_disk sdc "$DATA_UUID" 1-5 host1
     mk_disk sdd "$MIRROR_UUID" 2-3 host2
@@ -138,10 +138,10 @@ test_lib_resolves_usb_dir_and_scsi_host() {
 
 test_lib_detach_unmounts_records_spins_down_and_deletes() {
     lib
-    mount_fake "$T/DATA/.media/BACKUP4TB" "$DEVFS/sdd" rw,noatime # shared-subtree peer
+    mount_fake "$T/DATA/.media/BACKUP-DRIVE" "$DEVFS/sdd" rw,noatime # shared-subtree peer
     drive_detach "$MIRROR_UUID" || fail "detach failed"
     assert_not_mounted "$MIRROR"
-    assert_not_mounted "$T/DATA/.media/BACKUP4TB"
+    assert_not_mounted "$T/DATA/.media/BACKUP-DRIVE"
     assert_calls "^sync$"
     assert_calls "^hdparm -Y $DEVFS/sdd$"
     assert_eq 1 "$(cat "$SYSFS/block/sdd/device/delete")" "scsi delete"
@@ -487,8 +487,8 @@ test_failback_asks_for_typed_confirmation() {
 # pull for restore.sh to push.
 mint_setup() {
     MINT="$T/mint"
-    mkdir -p "$MINT/logs" "$T/mnt/data/nextcloud" "$T/mnt/data/backup" "$T/local-backup/Backups/AppData"
-    echo data >"$T/mnt/data/nextcloud/file"
+    mkdir -p "$MINT/logs" "$T/workstation/nextcloud" "$T/workstation/backup" "$T/local-backup/Backups/AppData"
+    echo data >"$T/workstation/nextcloud/file"
     echo appdata >"$T/local-backup/Backups/AppData/file"
     cp "$REPO/backup.sh" "$REPO/restore.sh" "$REPO/mirror-to-external.sh" "$REPO/push-exif-fixes.sh" "$MINT/"
     cp -r "$REPO/lib" "$MINT/lib"
@@ -498,7 +498,7 @@ mint_setup() {
     echo b >"$T/local-backup/Gallery/b.jpg"
     cat >"$MINT/profiles.conf" <<EOF
 PROFILES=(
-    "nextcloud|local|$T/mnt/data/nextcloud|Nextcloud data"
+    "nextcloud|local|$T/workstation/nextcloud|Nextcloud data"
     "media|remote|/media/DATA/Media|Media library on ZimaOS"
 )
 EOF
@@ -515,7 +515,7 @@ FOLDERS=( "Backups" )
 LOG_DIR="$MINT/logs"
 SERVER_BACKUP_LOG="/media/DATA/Backups/backup.log"
 MAX_SERVER_BACKUP_AGE_HOURS=48
-PUSH_SOURCE="${CFG_PUSH_SOURCE-$T/mnt/data}"
+PUSH_SOURCE="${CFG_PUSH_SOURCE-$T/workstation}"
 PUSH_TARGET="/media/MINT"
 PUSH_EXCLUDES=( "backup" )
 EOF
@@ -541,10 +541,10 @@ test_mint_full_run_pushes_after_the_pull() {
     rc=$?
     assert_eq 0 "$rc" "exit"
     assert_eq "rsync -a --human-readable --delete --rsync-path=sudo /usr/bin/rsync --info=progress2,name0 user@zimaos.test:/media/DATA/Backups/ $T/local-backup/Backups/
-rsync -a --human-readable --delete --rsync-path=sudo /usr/bin/rsync --info=progress2,name0 --exclude /.zimaos_storage.json --exclude /lost+found --exclude /backup $T/mnt/data/ user@zimaos.test:/media/MINT/" "$(grep ^rsync "$FAKE_CALLS")" "pull then push"
-    assert_contains "$out" "Pushing $T/mnt/data to ZimaOS"
+rsync -a --human-readable --delete --rsync-path=sudo /usr/bin/rsync --info=progress2,name0 --exclude /.zimaos_storage.json --exclude /lost+found --exclude /backup $T/workstation/ user@zimaos.test:/media/MINT/" "$(grep ^rsync "$FAKE_CALLS")" "pull then push"
+    assert_contains "$out" "Pushing $T/workstation to ZimaOS"
     [[ $out =~ Excluded:[[:space:]]+backup ]] || fail "excluded list not printed"
-    assert_contains "$out" "$T/mnt/data → ZimaOS:/media/MINT"
+    assert_contains "$out" "$T/workstation → ZimaOS:/media/MINT"
 }
 
 test_mint_folder_run_skips_the_push() {
@@ -593,7 +593,7 @@ test_mint_push_counts_what_is_already_on_the_target() {
 test_mint_dry_run_pushes_with_n() {
     mint_setup
     mint --dry-run >/dev/null || fail "exit"
-    assert_calls "^rsync -a --human-readable --delete --rsync-path=sudo /usr/bin/rsync -n --stats --exclude /.zimaos_storage.json --exclude /lost\\+found --exclude /backup $T/mnt/data/ user@zimaos.test:/media/MINT/$"
+    assert_calls "^rsync -a --human-readable --delete --rsync-path=sudo /usr/bin/rsync -n --stats --exclude /.zimaos_storage.json --exclude /lost\\+found --exclude /backup $T/workstation/ user@zimaos.test:/media/MINT/$"
 }
 
 # --- Linux Mint restore.sh --------------------------------------------------
@@ -679,7 +679,7 @@ test_mirror_dry_run_mirrors_local_profile_with_delete_and_n() {
     out=$(mint_mirror nextcloud --dry-run)
     rc=$?
     assert_eq 0 "$rc" "exit"
-    assert_eq "rsync -a --human-readable --delete -n --stats $T/mnt/data/nextcloud/ /media/user/EXT/" "$(cat "$FAKE_CALLS")" "calls"
+    assert_eq "rsync -a --human-readable --delete -n --stats $T/workstation/nextcloud/ /media/user/EXT/" "$(cat "$FAKE_CALLS")" "calls"
     assert_contains "$out" "ABOUT TO ERASE: /media/user/EXT (device sdz1, label 'EXT')"
 }
 

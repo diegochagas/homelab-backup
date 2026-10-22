@@ -31,7 +31,7 @@ cold/offline external drives.
 │ DATA4TB/Gallery          │──pull──▶ │ backup.sh                │
 │       │                  │          │       │                  │
 │       ▼                  │          │       ▼                  │
-│ BACKUP4TB (full mirror)  │          │ /mnt/data/backup         │
+│ BACKUP4TB (full mirror)  │          │ LOCAL_BACKUP             │
 │                          │          │       │                  │
 │       ▲                  │   SSH    │       ▼                  │
 │       │                  │◀──push── │ restore.sh (DR only)     │
@@ -47,8 +47,8 @@ cold/offline external drives.
 | Stage | Script | Runs on | Direction | Purpose |
 | ----- | ------ | ------- | --------- | ------- |
 | 1 | `zimaos/backup.sh` | ZimaOS (systemd timer) | `/DATA/AppData` + `/DATA/Projects` → `DATA4TB`, `DATA4TB` → `BACKUP4TB` | Consistent local copy + local mirror |
-| 2 | `backup.sh` | Linux Mint (systemd timer) | `DATA4TB` → `/mnt/data/backup` | Offsite copy |
-| 3 | `restore.sh` | Linux Mint (manual) | `/mnt/data/backup` → ZimaOS | Disaster recovery |
+| 2 | `backup.sh` | Linux Mint (systemd timer) | `DATA4TB` → `LOCAL_BACKUP` | Offsite copy |
+| 3 | `restore.sh` | Linux Mint (manual) | `LOCAL_BACKUP` → ZimaOS | Disaster recovery |
 | — | `mirror-to-external.sh` | Linux Mint (manual) | local or ZimaOS → external USB drive | Ad-hoc cold/offline copies |
 | — | `notify.sh` | Both | Telegram | Called by the backup scripts to report a finished/failed run |
 
@@ -147,7 +147,7 @@ homelab-backup/
 The local backup mirrors the top-level folders of the remote drive:
 
 ```
-/mnt/data/backup
+<LOCAL_BACKUP>
 │
 ├── Backups
 │   └── AppData        # mirrors /DATA/AppData on ZimaOS
@@ -215,11 +215,12 @@ LOCAL_BACKUP
 FOLDERS
 ```
 
-All configuration paths are specific to the machine that runs the backup. Use
-visible data-volume paths for ordinary backup content and synced files; the
-examples use `/mnt/data`. Reserve the gitignored secret files (such as
-`telegram.env`) for credentials and tokens rather than placing non-secret
-backup configuration in a credentials-only folder.
+All configuration paths are specific to the machine that runs the backup, so
+the example files hold placeholders (`/path/to/...`, `/media/YOUR-DRIVE`) that
+you replace in your own `config.sh`. Point them at ordinary data folders.
+Reserve the gitignored secret files (such as `telegram.env`) for credentials
+and tokens rather than placing non-secret backup configuration in a
+credentials-only folder.
 
 If you plan to use `mirror-to-external.sh`, also create its profiles file:
 
@@ -408,7 +409,7 @@ Dry Run can also be combined with a folder:
 
 ## Stage 3 — Restore to ZimaOS (disaster recovery)
 
-Pushes `/mnt/data/backup` back to the ZimaOS server, restoring each folder to
+Pushes `LOCAL_BACKUP` back to the ZimaOS server, restoring each folder to
 its respective remote location. Use this after a drive failure or a fresh
 ZimaOS install.
 
@@ -531,7 +532,7 @@ Size:              412G
 Status:            ✅ OK
 
 Mode:              Backup
-Destination:       /mnt/data/backup
+Destination:       /path/to/local/backup
 Elapsed:           02:14:37
 ```
 
