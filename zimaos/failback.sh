@@ -1,6 +1,8 @@
 #!/bin/sh
 # Switch back from the backup drive to a repaired or new data drive after a
-# failover. Manual, run as root on the ZimaOS box:
+# failover. failover-check.sh runs it with --yes when AUTO_FAILBACK=yes (and
+# FAILBACK_LOCK_HELD=1, since it already holds the lock); by hand, as root on
+# the ZimaOS box:
 #
 #   sudo ./zimaos/failback.sh --dry-run   # always first
 #   sudo ./zimaos/failback.sh             # asks you to type "failback"
@@ -10,9 +12,14 @@
 # ZimaOS mounts it at SRC_DATA) and its UUID put in config.sh as DATA_UUID:
 #   blkid -o value -s UUID /dev/sdX
 #
-# Steps: stop apps -> drop the bind mount -> mount the data drive at SRC_DATA
+# Steps: stop apps (and every container bound to the drive) -> drop the bind
+# mount -> mount the data drive at SRC_DATA and check it reads and writes
 # -> rsync --delete DST_MIRROR onto it (hours) -> clear the failover flag ->
-# start apps -> detach the backup drive again when MIRROR_DETACH=yes.
+# start the containers and report the ones that stay down -> detach the
+# backup drive again when MIRROR_DETACH=yes.
+#
+# Every abort after the apps were stopped goes to Telegram; the watchdog then
+# puts the apps back onto the backup drive on its next run.
 set -u
 
 # shellcheck disable=SC1007
@@ -40,6 +47,8 @@ fi
 . "$CONFIG"
 # shellcheck source=lib/drive.sh
 . "$SCRIPT_DIR/lib/drive.sh"
+# shellcheck source=lib/containers.sh
+. "$SCRIPT_DIR/lib/containers.sh"
 
 for v in DATA_UUID MIRROR_UUID STATE_DIR SRC_DATA DST_MIRROR APPS; do
     eval "val=\${$v:-}"
@@ -51,6 +60,8 @@ done
 
 FLAG="$STATE_DIR/failover.active"
 FAILOVER_LOG="$STATE_DIR/failover.log"
+# Containers that ran at the watchdog's last healthy check (see lib/containers.sh).
+SNAPSHOT="$STATE_DIR/containers.running"
 
 log() {
     echo "$1"
@@ -64,9 +75,18 @@ notify() {
     }
     "$SCRIPT_DIR/../notify.sh" "$1" >/dev/null 2>&1 || true
 }
-# docker prints the container name; its stderr is noise when a container is already stopped/started.
-stop_apps() { for c in $APPS; do run docker stop "$c" 2>/dev/null || true; done; }
-start_apps() { for c in $APPS; do run docker start "$c" 2>/dev/null || true; done; }
+
+# failback_abort MESSAGE [EXIT-CODE] — log + Telegram, then exit. Apps stay
+# stopped and the failover flag stays: the watchdog re-establishes the failover.
+#   failback_abort "cannot unmount $SRC_DATA"
+failback_abort() {
+    log "ABORT: $1"
+    notify "🚨 FAILBACK FAILED — $(hostname)
+
+$1
+The failover flag is kept and the watchdog puts the apps back onto $DST_MIRROR. Fix and rerun failback.sh."
+    exit "${2:-1}"
+}
 
 if [ ! -f "$FLAG" ]; then
     echo "No failover is active ($FLAG missing) - nothing to do." >&2
@@ -81,6 +101,12 @@ mirror_dev=$(drive_dev_by_uuid "$MIRROR_UUID") || {
     exit 1
 }
 
+# rsync --delete from an empty mountpoint would wipe the data drive.
+if [ "$(drive_mount_source "$DST_MIRROR")" != "$mirror_dev" ]; then
+    echo "The backup drive ($mirror_dev) is not what is mounted at $DST_MIRROR - refusing to copy from it." >&2
+    exit 1
+fi
+
 echo "Failover active since: $(cat "$FLAG")"
 echo "Data drive:   $data_dev  -> will be mounted at $SRC_DATA and OVERWRITTEN with the mirror"
 echo "Backup drive: $mirror_dev ($DST_MIRROR)"
@@ -94,13 +120,16 @@ if [ "$DRY_RUN" != 1 ] && [ "$YES" != 1 ]; then
     }
 fi
 
-# Hold the same lock as backup.sh / failover-check.sh for the whole run.
+# Hold the same lock as backup.sh / failover-check.sh for the whole run
+# (failover-check.sh already holds it when it calls us).
 mkdir -p "$STATE_DIR"
-exec 9>"$STATE_DIR/lock"
-flock -n 9 || {
-    echo "Another backup/failover script is running - try again later." >&2
-    exit 1
-}
+if [ "${FAILBACK_LOCK_HELD:-0}" != 1 ]; then
+    exec 9>"$STATE_DIR/lock"
+    flock -n 9 || {
+        echo "Another backup/failover script is running - try again later." >&2
+        exit 1
+    }
+fi
 
 START=$(date +%s)
 log "=== Failback started ==="
@@ -108,50 +137,46 @@ notify "🔁 FAILBACK STARTED — $(hostname)
 
 Copying $DST_MIRROR back onto the data drive. Apps are stopped until it finishes."
 
-stop_apps
+containers_stop_for_drive "$SRC_DATA"
 
 # Peel the bind mount (and whatever ZimaOS stacked there) off SRC_DATA until
 # the data drive itself is the one mounted there.
 while drive_is_mounted "$SRC_DATA" && [ "$(drive_mount_source "$SRC_DATA")" != "$data_dev" ]; do
-    run umount -l "$SRC_DATA" || {
-        log "ABORT: cannot unmount $SRC_DATA"
-        exit 1
-    }
+    run umount -l "$SRC_DATA" || failback_abort "cannot unmount $SRC_DATA"
     [ "$DRY_RUN" = 1 ] && break
 done
 if ! drive_is_mounted "$SRC_DATA"; then
     run mkdir -p "$SRC_DATA"
-    run mount "UUID=$DATA_UUID" "$SRC_DATA" || {
-        log "ABORT: cannot mount the data drive at $SRC_DATA"
-        exit 1
-    }
+    run mount "UUID=$DATA_UUID" "$SRC_DATA" ||
+        failback_abort "cannot mount the data drive at $SRC_DATA (still mounted read-only somewhere else?)"
 fi
 if [ "$DRY_RUN" != 1 ] && ! drive_is_rw "$SRC_DATA"; then
-    run mount -o remount,rw "$SRC_DATA" || {
-        log "ABORT: $SRC_DATA is read-only"
-        exit 1
-    }
+    run mount -o remount,rw "$SRC_DATA" || failback_abort "$SRC_DATA is read-only"
 fi
+if [ "$DRY_RUN" != 1 ] && ! drive_io_ok "$SRC_DATA"; then
+    failback_abort "the data drive at $SRC_DATA failed the read/write check"
+fi
+
+# The progress meter only makes sense on a terminal, not in the watchdog's journal.
+progress=
+[ -t 1 ] && progress=--info=progress2
 
 if [ "$DRY_RUN" = 1 ]; then
     rsync -a --delete --dry-run --stats "$DST_MIRROR/" "$SRC_DATA/" | tail -15
 else
-    rsync -a --delete --info=progress2 "$DST_MIRROR/" "$SRC_DATA/" || {
+    # shellcheck disable=SC2086 # $progress is one optional flag, empty off a terminal
+    rsync -a --delete $progress "$DST_MIRROR/" "$SRC_DATA/" || {
         rc=$?
-        if [ "$rc" -ne 24 ]; then
-            log "ABORT: rsync exit code $rc - apps left stopped, failover flag kept"
-            notify "🚨 FAILBACK FAILED — $(hostname)
-
-rsync exited with code $rc. Apps are left stopped and the failover flag kept; fix and rerun failback.sh."
-            exit "$rc"
-        fi
+        [ "$rc" -eq 24 ] || failback_abort "rsync exit code $rc" "$rc"
     }
 fi
 
 if [ "$DRY_RUN" != 1 ]; then
-    rm -f "$FLAG" "$STATE_DIR/failover.count" "$STATE_DIR/failover.last-state" "$STATE_DIR/failover.data-returned"
+    rm -f "$FLAG" "$STATE_DIR/failover.count" "$STATE_DIR/failover.last-state" "$STATE_DIR/failover.data-returned" \
+        "$STATE_DIR/failover.data-stable" "$STATE_DIR/failover.auto-failback-tried"
 fi
-start_apps
+containers_start_expected "$SNAPSHOT"
+down=$(containers_verify "$SNAPSHOT")
 
 if [ "${MIRROR_DETACH:-no}" = yes ]; then
     drive_detach "$MIRROR_UUID" || log "WARN: could not detach the backup drive"
@@ -159,6 +184,14 @@ fi
 
 secs=$(($(date +%s) - START))
 log "=== Failback finished in $(printf '%02d:%02d:%02d' $((secs / 3600)) $(((secs % 3600) / 60)) $((secs % 60))) ==="
+if [ -n "$down" ]; then
+    log "containers still down: $down"
+    notify "⚠️ FAILBACK DONE, CONTAINERS DOWN — $(hostname)
+
+The data drive is back in place and nightly backups resume, but these did not start: $down
+Start them by hand: sudo docker start $down"
+    exit 0
+fi
 notify "✅ FAILBACK DONE — $(hostname)
 
-Apps are running from the data drive again. Nightly backups resume."
+Every container is running from the data drive again. Nightly backups resume."

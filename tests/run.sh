@@ -28,9 +28,13 @@ setup() {
     export FAKE_MOUNTS="$T/mounts" FAKE_CALLS="$T/calls"
     # ATTACH_TIMEOUT is in whole seconds, so tests where the disk comes back
     # asynchronously raise it: with 1s the deadline can be a few ms away.
-    export DRY_RUN=0 POLL=0 ATTACH_TIMEOUT=1 MOUNT_WAIT=0 HEALTH_TIMEOUT=5
+    export DRY_RUN=0 POLL=0 ATTACH_TIMEOUT=1 MOUNT_WAIT=0 HEALTH_TIMEOUT=5 APPS_SETTLE=0
+    export FAKE_DOCKER_RUNNING="$T/docker-running" FAKE_DOCKER_BINDS="$T/docker-binds"
+    unset FAKE_DOCKER_WONT_START
     : >"$FAKE_MOUNTS"
     : >"$FAKE_CALLS"
+    : >"$FAKE_DOCKER_BINDS"
+    printf 'app1\napp2\n' >"$FAKE_DOCKER_RUNNING"
     DATA="$T/media/DATA-DRIVE"
     MIRROR="$T/media/BACKUP-DRIVE"
     mkdir -p "$DATA" "$MIRROR" "$T/DATA/AppData" "$T/DATA/Projects" "$STATE_DIR"
@@ -83,6 +87,8 @@ STATE_DIR="$STATE_DIR"
 MIRROR_DETACH="${CFG_DETACH:-yes}"
 FAILOVER_ENABLED="${CFG_FAILOVER:-yes}"
 FAIL_THRESHOLD="${CFG_THRESHOLD:-2}"
+AUTO_FAILBACK="${CFG_AUTO_FAILBACK:-no}"
+AUTO_FAILBACK_STABLE_CHECKS="${CFG_STABLE_CHECKS:-2}"
 EOF
 }
 
@@ -337,6 +343,128 @@ test_failover_dry_run_changes_nothing() {
     assert_eq "" "$(cat "$FAKE_CALLS")" "no real calls"
 }
 
+# A container outside APPS that binds a folder on the data drive, plus one
+# that only depends on the apps (like a site using the database container).
+with_extra_containers() {
+    printf 'app1\napp2\nreader\nsite\n' >"$FAKE_DOCKER_RUNNING"
+    echo "reader $DATA/library" >"$FAKE_DOCKER_BINDS"
+    check # healthy check: remembers the four running containers
+    : >"$FAKE_CALLS"
+}
+
+test_failover_stops_drive_users_and_restarts_everything_that_ran() {
+    with_extra_containers
+    assert_eq "app1 app2 reader site" "$(tr '\n' ' ' <"$STATE_DIR/containers.running" | sed 's/ $//')" "snapshot"
+    unplug "$DATA_UUID"
+    printf 'app1\nreader\n' >"$FAKE_DOCKER_RUNNING" # the others died with the drive
+    CFG_THRESHOLD=1 write_config
+    check
+    assert_calls "^docker stop reader$" # binds the drive, not in APPS
+    assert_no_calls "^docker stop site$"
+    assert_calls "^docker start reader$"
+    assert_calls "^docker start site$"
+    assert_eq "app1 app2 reader site" "$(sort "$FAKE_DOCKER_RUNNING" | tr '\n' ' ' | sed 's/ $//')" "all up"
+    ! grep -q "containers still down" "$STATE_DIR/failover.log" || fail "no container alert expected"
+}
+
+test_failover_reports_containers_that_stay_down() {
+    with_extra_containers
+    unplug "$DATA_UUID"
+    : >"$FAKE_DOCKER_RUNNING"
+    CFG_THRESHOLD=1 write_config
+    FAKE_DOCKER_WONT_START="site" check
+    assert_file "$STATE_DIR/failover.active"
+    grep -q "containers still down: site $" "$STATE_DIR/failover.log" || fail "expected 'site' reported down; log:
+$(cat "$STATE_DIR/failover.log")"
+    assert_eq 2 "$(grep -c '^docker start site$' "$FAKE_CALLS")" "one retry"
+}
+
+test_failover_healthy_check_does_not_forget_containers_when_docker_answers_nothing() {
+    with_extra_containers
+    : >"$FAKE_DOCKER_RUNNING"
+    check
+    assert_eq 4 "$(wc -l <"$STATE_DIR/containers.running" | tr -d ' ')" "snapshot kept"
+}
+
+auto_failover_now() {
+    unplug "$DATA_UUID"
+    CFG_THRESHOLD=1 CFG_AUTO_FAILBACK=yes write_config
+    check
+    replug "$DATA_UUID" sdc
+    : >"$FAKE_CALLS"
+}
+
+test_auto_failback_waits_for_stable_checks_then_fails_back() {
+    with_extra_containers
+    auto_failover_now
+    check
+    assert_eq 1 "$(cat "$STATE_DIR/failover.data-stable")" "1st stable check"
+    assert_file "$STATE_DIR/failover.active"
+    assert_no_calls "^rsync"
+    check
+    assert_calls "^docker stop reader$"
+    assert_calls "^rsync -a --delete $MIRROR/ $DATA/$"
+    assert_calls "^docker start site$"
+    assert_eq "$DEVFS/sdc" "$(mount_source "$DATA")" "data drive back at SRC_DATA"
+    assert_no_file "$STATE_DIR/failover.active"
+    assert_no_file "$STATE_DIR/failover.data-stable"
+    assert_no_file "$STATE_DIR/failover.auto-failback-tried"
+    : >"$FAKE_CALLS"
+    check # normal mode again
+    assert_eq "" "$(cat "$FAKE_CALLS")" "nothing left to do"
+}
+
+test_auto_failback_restarts_the_count_when_the_drive_drops_again() {
+    auto_failover_now
+    check
+    unplug "$DATA_UUID"
+    check
+    assert_no_file "$STATE_DIR/failover.data-stable"
+    assert_no_file "$STATE_DIR/failover.data-returned"
+    replug "$DATA_UUID" sdc
+    check
+    assert_eq 1 "$(cat "$STATE_DIR/failover.data-stable")" "count restarted"
+    assert_no_calls "^rsync"
+}
+
+test_auto_failback_tries_once_and_goes_back_to_the_mirror_when_it_fails() {
+    auto_failover_now
+    check
+    FAKE_RSYNC_RC=11 check
+    assert_calls "^rsync -a --delete"
+    assert_file "$STATE_DIR/failover.active"
+    assert_file "$STATE_DIR/failover.auto-failback-tried"
+    assert_eq "$DEVFS/sdd" "$(mount_source "$DATA")" "apps back on the mirror"
+    assert_calls "^docker start app1$"
+    grep -q "ABORT: rsync exit code 11" "$STATE_DIR/failover.log" || fail "abort reason logged"
+    : >"$FAKE_CALLS"
+    check
+    check
+    assert_no_calls "^rsync" # no second attempt
+}
+
+test_auto_failback_is_off_by_default_and_dry_run_only_prints() {
+    failover_now
+    check
+    check
+    check
+    assert_no_calls "^rsync"
+    assert_no_file "$STATE_DIR/failover.data-stable"
+    CFG_THRESHOLD=1 CFG_AUTO_FAILBACK=yes CFG_STABLE_CHECKS=1 write_config
+    out=$(DRY_RUN=1 check)
+    assert_contains "$out" "[dry-run] $REPO/zimaos/failback.sh --yes"
+    assert_no_calls "^rsync"
+    assert_file "$STATE_DIR/failover.active"
+}
+
+test_auto_failback_rejects_a_bad_stable_checks_value() {
+    CFG_STABLE_CHECKS=soon write_config
+    out=$(check 2>&1)
+    rc=$?
+    assert_eq 1 "$rc" "exit"
+    assert_contains "$out" 'AUTO_FAILBACK_STABLE_CHECKS "soon" must be a whole number'
+}
+
 # --- backup.sh ------------------------------------------------------------
 
 test_backup_requires_config() {
@@ -452,7 +580,7 @@ test_failback_restores_and_detaches_mirror() {
     assert_eq 0 "$rc" "exit"
     assert_calls "^umount -l $DATA$"
     assert_calls "^mount UUID=$DATA_UUID $DATA$"
-    assert_calls "^rsync -a --delete --info=progress2 $MIRROR/ $DATA/$"
+    assert_calls "^rsync -a --delete $MIRROR/ $DATA/$" # no progress meter off a terminal
     assert_calls "^docker start app1$"
     assert_calls "^hdparm -Y $DEVFS/sdd$"
     assert_eq "$DEVFS/sdc" "$(mount_source "$DATA")" "data drive back at SRC_DATA"
@@ -477,6 +605,50 @@ test_failback_asks_for_typed_confirmation() {
     assert_contains "$out" "Aborted"
     assert_file "$STATE_DIR/failover.active"
     assert_no_calls "^docker"
+}
+
+test_failback_refuses_when_the_mirror_is_not_mounted_at_its_path() {
+    failover_now
+    # only the bind at SRC_DATA is left; DST_MIRROR itself is an empty folder
+    grep -v "^$MIRROR " "$FAKE_MOUNTS" >"$FAKE_MOUNTS.tmp" && mv "$FAKE_MOUNTS.tmp" "$FAKE_MOUNTS"
+    out=$("$REPO/zimaos/failback.sh" --yes 2>&1)
+    rc=$?
+    assert_eq 1 "$rc" "exit"
+    assert_contains "$out" "refusing to copy from it"
+    assert_no_calls "^rsync"
+    assert_no_calls "^docker"
+}
+
+test_failback_stops_drive_users_and_reports_containers_that_stay_down() {
+    with_extra_containers
+    failover_now
+    printf 'app1\napp2\nreader\n' >"$FAKE_DOCKER_RUNNING" # site died when its database stopped
+    out=$(FAKE_DOCKER_WONT_START="site" "$REPO/zimaos/failback.sh" --yes)
+    rc=$?
+    assert_eq 0 "$rc" "exit"
+    assert_calls "^docker stop reader$"
+    assert_calls "^docker start reader$"
+    assert_contains "$out" "containers still down: site"
+    assert_no_file "$STATE_DIR/failover.active"
+}
+
+test_failback_aborts_when_the_data_drive_fails_the_write_check() {
+    failover_now
+    chmod a-w "$DATA"
+    out=$("$REPO/zimaos/failback.sh" --yes 2>&1)
+    rc=$?
+    chmod u+w "$DATA"
+    assert_eq 1 "$rc" "exit"
+    assert_contains "$out" "failed the read/write check"
+    assert_no_calls "^rsync"
+    assert_file "$STATE_DIR/failover.active"
+}
+
+test_backup_logs_the_failover_as_the_reason_it_skipped() {
+    failover_now
+    "$REPO/zimaos/backup.sh" 2>/dev/null
+    assert_eq 1 "$?" "exit"
+    grep -q "ABORT: failover is active - backup skipped until failback" "$T/backup.log" || fail "reason missing from backup.log"
 }
 
 # --- Linux Mint backup.sh (push stage) -------------------------------------
