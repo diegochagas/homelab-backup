@@ -1,2 +1,31 @@
 #!/bin/sh
-echo "docker${*:+ $*}" >> "$FAKE_CALLS"
+# Fake docker. start/stop are recorded in $FAKE_CALLS and keep the list of
+# running containers in $FAKE_DOCKER_RUNNING (one name per line); the queries
+# (ps, inspect) answer from it and are not recorded.
+#   FAKE_DOCKER_BINDS       file with "NAME BIND-SOURCE" lines, read by inspect
+#   FAKE_DOCKER_WONT_START  space-separated names that `docker start` leaves down
+running="${FAKE_DOCKER_RUNNING:-/dev/null}"
+case ${1:-} in
+    ps)
+        cat "$running" 2>/dev/null
+        exit 0
+        ;;
+    inspect)
+        for name; do :; done
+        [ -f "${FAKE_DOCKER_BINDS:-}" ] && awk -v n="$name" '$1 == n { print $2 }' "$FAKE_DOCKER_BINDS"
+        exit 0
+        ;;
+esac
+echo "docker${*:+ $*}" >>"$FAKE_CALLS"
+[ "$running" != /dev/null ] || exit 0
+case ${1:-} in
+    start)
+        case " ${FAKE_DOCKER_WONT_START:-} " in *" $2 "*) exit 1 ;; esac
+        grep -qx -- "$2" "$running" 2>/dev/null || echo "$2" >>"$running"
+        ;;
+    stop)
+        grep -vx -- "$2" "$running" >"$running.tmp" 2>/dev/null
+        mv "$running.tmp" "$running"
+        ;;
+esac
+exit 0

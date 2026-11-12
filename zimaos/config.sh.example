@@ -72,3 +72,17 @@ MIRROR_DETACH="no"
 # SRC_DATA and the apps restarted.
 FAILOVER_ENABLED="no"
 FAIL_THRESHOLD="3"
+
+# yes: once the data drive is back and
+# has stayed connected for
+# AUTO_FAILBACK_STABLE_CHECKS watchdog
+# checks in a row (3 x 5 min), the
+# watchdog runs failback.sh by itself:
+# the backup drive is copied back over
+# the data drive (rsync --delete). One
+# attempt per failover; when it fails
+# the apps stay on the backup drive and
+# Telegram says what to fix. With no,
+# failback.sh is run by hand.
+AUTO_FAILBACK="no"
+AUTO_FAILBACK_STABLE_CHECKS="3"

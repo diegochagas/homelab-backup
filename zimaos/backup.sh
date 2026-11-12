@@ -37,6 +37,9 @@ STATE_DIR="${STATE_DIR:-}"
 
 if [ -n "$STATE_DIR" ]; then
     if [ -f "$STATE_DIR/failover.active" ]; then
+        # The log line is what homelab-monitor shows as the reason; without it
+        # the alert was a stale "started ... and never finished" (2026-11-12).
+        echo "$(date '+%F %T') ABORT: failover is active - backup skipped until failback" >> "$LOG" 2>/dev/null || true
         echo "Failover is active ($STATE_DIR/failover.active) - apps run from $DST_MIRROR; run failback.sh first." >&2
         exit 1
     fi

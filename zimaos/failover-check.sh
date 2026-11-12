@@ -14,6 +14,14 @@
 # own paths - and tells you when the data drive is back so you can run
 # failback.sh. zimaos/backup.sh refuses to run in this mode.
 #
+# With AUTO_FAILBACK=yes it runs failback.sh itself once the data drive has
+# been present for AUTO_FAILBACK_STABLE_CHECKS checks in a row. One attempt
+# per failover: when it fails, the apps go back onto the backup drive and the
+# rest is manual (the Telegram message says what failed).
+#
+# Containers: see lib/containers.sh for which ones are stopped, started again
+# and reported when they stay down.
+#
 #   DRY_RUN=1 ./zimaos/failover-check.sh   # prints what it would do
 set -u
 
@@ -29,6 +37,8 @@ fi
 . "$CONFIG"
 # shellcheck source=lib/drive.sh
 . "$SCRIPT_DIR/lib/drive.sh"
+# shellcheck source=lib/containers.sh
+. "$SCRIPT_DIR/lib/containers.sh"
 
 [ "${FAILOVER_ENABLED:-no}" = yes ] || exit 0
 
@@ -40,11 +50,23 @@ for v in DATA_UUID MIRROR_UUID STATE_DIR SRC_DATA DST_MIRROR APPS; do
     fi
 done
 FAIL_THRESHOLD="${FAIL_THRESHOLD:-3}"
+AUTO_FAILBACK="${AUTO_FAILBACK:-no}"
+AUTO_FAILBACK_STABLE_CHECKS="${AUTO_FAILBACK_STABLE_CHECKS:-3}"
+case $AUTO_FAILBACK_STABLE_CHECKS in
+    '' | *[!0-9]* | 0)
+        echo "failover-check: AUTO_FAILBACK_STABLE_CHECKS \"$AUTO_FAILBACK_STABLE_CHECKS\" must be a whole number of checks, 1 or more" >&2
+        exit 1
+        ;;
+esac
 
 FLAG="$STATE_DIR/failover.active"
 COUNT="$STATE_DIR/failover.count"
 LAST="$STATE_DIR/failover.last-state"
 RETURNED="$STATE_DIR/failover.data-returned"
+STABLE="$STATE_DIR/failover.data-stable"
+TRIED="$STATE_DIR/failover.auto-failback-tried"
+# Containers that ran at the last healthy check (see lib/containers.sh).
+SNAPSHOT="$STATE_DIR/containers.running"
 # Not under LOG: that file lives on the data drive this script is watching.
 FAILOVER_LOG="$STATE_DIR/failover.log"
 
@@ -78,9 +100,19 @@ state_rm() {
     rm -f "$1"
 }
 
-# docker prints the container name; its stderr is noise when a container is already stopped/started.
-stop_apps() { for c in $APPS; do run docker stop "$c" 2>/dev/null || true; done; }
-start_apps() { for c in $APPS; do run docker start "$c" 2>/dev/null || true; done; }
+# Starts the expected containers and sends one Telegram message naming the
+# ones that stayed down.
+#   start_and_verify_containers
+start_and_verify_containers() {
+    containers_start_expected "$SNAPSHOT"
+    down=$(containers_verify "$SNAPSHOT")
+    [ -n "$down" ] || return 0
+    log "containers still down: $down"
+    notify "🚨 CONTAINERS DOWN — $(hostname)
+
+Did not come back after the drive switch: $down
+Start them by hand: sudo docker start $down"
+}
 
 mirror_is_primary() {
     src=$(drive_mount_source "$SRC_DATA")
@@ -90,7 +122,7 @@ mirror_is_primary() {
 # Puts the backup drive at SRC_DATA. Leaves the apps STOPPED on failure: with
 # nothing mounted at SRC_DATA they would write into the system drive instead.
 mount_mirror_as_data() {
-    stop_apps
+    containers_stop_for_drive "$SRC_DATA"
     drive_umount_all "$SRC_DATA" || log "WARN: could not unmount $SRC_DATA"
     if ! drive_attach "$MIRROR_UUID" "$DST_MIRROR"; then
         log "FAILOVER FAILED: backup drive did not come back - apps left stopped"
@@ -108,7 +140,64 @@ Check the drives and run the watchdog again: sudo systemctl start homelab-failov
 mount --bind $DST_MIRROR $SRC_DATA failed; the apps are left stopped."
         return 1
     fi
-    start_apps
+    start_and_verify_containers
+}
+
+# Runs failback.sh once per failover and, when it fails, puts the apps back
+# onto the backup drive. The lock this script holds is passed on (fd 9).
+#   auto_failback
+auto_failback() {
+    if [ "$DRY_RUN" = 1 ]; then
+        echo "[dry-run] $SCRIPT_DIR/failback.sh --yes"
+        return 0
+    fi
+    state_write "$(date '+%F %T')" "$TRIED"
+    log "=== automatic failback: data drive stable for $AUTO_FAILBACK_STABLE_CHECKS checks ==="
+    FAILBACK_LOCK_HELD=1 "$SCRIPT_DIR/failback.sh" --yes >/dev/null 2>&1 && return 0
+    log "automatic failback FAILED - back onto the backup drive, no second attempt"
+    mirror_is_primary || mount_mirror_as_data || return 1
+    notify "⚠️ AUTOMATIC FAILBACK GAVE UP — $(hostname)
+
+$(grep 'failback: ABORT' "$FAILOVER_LOG" | tail -1)
+Apps are running from $DST_MIRROR again. It will not try again by itself.
+When the cause is fixed: sudo $SCRIPT_DIR/failback.sh"
+}
+
+# True while AUTO_FAILBACK=yes and this failover has not used its one attempt.
+#   auto_failback_pending && echo "will fail back by itself"
+auto_failback_pending() { [ "$AUTO_FAILBACK" = yes ] && [ ! -f "$TRIED" ]; }
+
+# Failover mode: reports the data drive coming back (and going again) and,
+# with AUTO_FAILBACK=yes, counts the checks it stays before failing back.
+#   watch_returned_data_drive
+watch_returned_data_drive() {
+    if ! drive_dev_by_uuid "$DATA_UUID" >/dev/null; then
+        [ -f "$RETURNED" ] && log "data drive gone again"
+        state_rm "$RETURNED"
+        state_rm "$STABLE"
+        return 0
+    fi
+    [ -f "$RETURNED" ] || announce_returned_data_drive
+    auto_failback_pending || return 0
+    n=$(($(cat "$STABLE" 2>/dev/null || echo 0) + 1))
+    state_write "$n" "$STABLE"
+    log "data drive present ($n/$AUTO_FAILBACK_STABLE_CHECKS checks before the automatic failback)"
+    [ "$n" -lt "$AUTO_FAILBACK_STABLE_CHECKS" ] || auto_failback
+}
+
+# One Telegram message per return of the data drive, saying what happens next.
+#   announce_returned_data_drive
+announce_returned_data_drive() {
+    state_write "$(date '+%F %T')" "$RETURNED"
+    next="When ready:
+sudo $SCRIPT_DIR/failback.sh"
+    if auto_failback_pending; then
+        next="Automatic failback after $AUTO_FAILBACK_STABLE_CHECKS checks in a row with the drive present."
+    fi
+    log "data drive is back"
+    notify "ℹ️ DATA DRIVE IS BACK — $(hostname)
+
+Apps still run from the backup drive. $next"
 }
 
 if [ -f "$FLAG" ]; then
@@ -120,14 +209,7 @@ if [ -f "$FLAG" ]; then
 $SRC_DATA was not the backup drive any more (reboot or the data drive came back).
 Apps are running from $DST_MIRROR again."
     fi
-    if drive_dev_by_uuid "$DATA_UUID" >/dev/null && [ ! -f "$RETURNED" ]; then
-        state_write "$(date '+%F %T')" "$RETURNED"
-        log "data drive is back - waiting for failback.sh"
-        notify "ℹ️ DATA DRIVE IS BACK — $(hostname)
-
-Apps still run from the backup drive. When ready:
-sudo $SCRIPT_DIR/failback.sh"
-    fi
+    watch_returned_data_drive || exit 1
     exit 0
 fi
 
@@ -144,6 +226,7 @@ case $state in
 $SRC_DATA is back to normal (was $prev)."
         fi
         state_rm "$COUNT"
+        containers_snapshot "$SNAPSHOT"
         ;;
     RO | UNMOUNTED)
         state_rm "$COUNT"
@@ -172,7 +255,8 @@ Data drive $state for $n checks. Stopping apps and switching to $DST_MIRROR..."
 
 Apps are running from the backup drive (bind-mounted at $SRC_DATA).
 Anything written after the last nightly backup is lost. Nightly backups are paused.
-Replace/repair the data drive, then run: sudo $SCRIPT_DIR/failback.sh"
+Replace/repair the data drive, then run: sudo $SCRIPT_DIR/failback.sh
+(AUTO_FAILBACK=$AUTO_FAILBACK: with yes it fails back by itself once the drive is back and stable.)"
         elif [ "$n" -eq 1 ]; then
             notify "⚠️ DATA DRIVE $state — $(hostname)
 

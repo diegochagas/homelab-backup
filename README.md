@@ -119,7 +119,8 @@ homelab-backup/
 ├── zimaos/
 │   ├── backup.sh               # Stage 1: runs on the ZimaOS server itself
 │   ├── failover-check.sh       # Data-drive watchdog: fails over to the backup drive
-│   ├── failback.sh             # Manual: switch back after a failover
+│   ├── failback.sh             # Switch back after a failover (by hand or AUTO_FAILBACK)
+│   ├── lib/containers.sh       # Which containers stop/start around a drive switch, and which stayed down
 │   ├── lib/drive.sh            # Attach/detach/health helpers shared by the three
 │   ├── install-timer.sh        # Installs the root systemd timers on ZimaOS
 │   ├── homelab-backup.service / .timer
@@ -333,10 +334,15 @@ root and checks the data drive (`SRC_DATA`):
 | `RO` / `UNMOUNTED` | disk present but not usable | Telegram alert only — it's a mount problem, not a dead disk |
 | `MISSING` / `IOERR` | disk gone, or a read/write failed or stalled | counts; after `FAIL_THRESHOLD` checks in a row → failover |
 
-Failover stops the `APPS` containers, lazily unmounts the dead drive, brings
+Failover stops the `APPS` containers and every other running container that
+binds a folder on the data drive, lazily unmounts the dead drive, brings
 the backup drive back (attaching it if it was detached), bind-mounts it at
 `SRC_DATA` so every container finds its usual paths, starts the containers
-again and writes `STATE_DIR/failover.active`. Anything written after the last
+again and writes `STATE_DIR/failover.active`. "The containers" are `APPS` plus
+everything that was running at the watchdog's last healthy check
+(`STATE_DIR/containers.running`), so a site that died with its database comes
+back too; the ones that still don't run after a second start are named in a
+Telegram message. Anything written after the last
 nightly backup is lost; nightly backups are paused (`backup.sh` refuses to run,
 otherwise it would mirror the wrong way). If the backup drive doesn't come
 back the apps are **left stopped**: with nothing mounted at `SRC_DATA` they
@@ -349,7 +355,15 @@ up again. Plug a replacement in only when you are ready to fail back: the
 watchdog restarts the apps to keep them on the backup drive whenever something
 else lands on `SRC_DATA`.
 
-Switching back is manual:
+Switching back is automatic with `AUTO_FAILBACK="yes"`: once the data drive
+has been connected for `AUTO_FAILBACK_STABLE_CHECKS` checks in a row (default
+3, so 15 minutes) the watchdog runs `failback.sh --yes` itself. It gets one
+attempt per failover. When that fails (drive won't mount read-write, fails the
+read/write check, rsync error) the apps go back onto the backup drive and a
+Telegram message says what failed and that the rest is manual. A drive that
+drops again before the count is reached starts the count over.
+
+By hand (always, with `AUTO_FAILBACK="no"`; after a failed attempt otherwise):
 
 ```bash
 # new disk: format it ext4 with the same label, put its UUID in zimaos/config.sh
@@ -357,9 +371,16 @@ sudo ./zimaos/failback.sh --dry-run
 sudo ./zimaos/failback.sh          # asks you to type "failback"
 ```
 
-It stops the apps, puts the data drive back at `SRC_DATA`, copies the backup
-drive onto it (`rsync --delete`, hours for a few TB), clears the flag, starts
-the apps and detaches the backup drive again.
+It refuses to start unless the backup drive itself is mounted at `DST_MIRROR`
+(copying from an empty folder would wipe the data drive). Then it stops the
+apps and every container bound to the drive, puts the data drive back at
+`SRC_DATA`, checks that it reads and writes, copies the backup drive onto it
+(`rsync --delete`, hours for a few TB), clears the flag, starts the containers
+(reporting the ones that stay down) and detaches the backup drive again. Every
+abort is sent to Telegram.
+
+While a failover is active `backup.sh` writes `ABORT: failover is active` to
+its log, which is the reason homelab-monitor then shows for the failed backup.
 
 All three scripts take `DRY_RUN=1` (or `--dry-run` for `failback.sh`) and print
 what they would do without touching mounts, containers, sysfs or state files.
