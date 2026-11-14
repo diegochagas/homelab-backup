@@ -588,6 +588,13 @@ test_failback_restores_and_detaches_mirror() {
     assert_no_file "$STATE_DIR/failover.data-returned"
 }
 
+test_failback_keeps_the_data_drives_own_backup_log() {
+    failover_now
+    sed -i "s|^LOG=.*|LOG=\"$DATA/Backups/backup.log\"|" "$HOMELAB_CONFIG"
+    "$REPO/zimaos/failback.sh" --yes >/dev/null
+    assert_calls "^rsync -a --delete --exclude=/Backups/backup.log $MIRROR/ $DATA/$"
+}
+
 test_failback_keeps_flag_and_apps_stopped_when_rsync_fails() {
     failover_now
     FAKE_RSYNC_RC=11 "$REPO/zimaos/failback.sh" --yes >/dev/null 2>&1
