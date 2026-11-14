@@ -161,11 +161,21 @@ fi
 progress=
 [ -t 1 ] && progress=--info=progress2
 
+# The mirror's copy of backup.log is a snapshot from the middle of the last
+# nightly run (it ends at "Backup started"). Restoring it made homelab-monitor
+# report "started ... and never finished" after the 2026-11-14 failback, so the
+# data drive keeps its own, complete log.
+log_exclude=
+case "${LOG:-}" in
+    "$SRC_DATA"/*) log_exclude="--exclude=/${LOG#"$SRC_DATA"/}" ;;
+esac
+
 if [ "$DRY_RUN" = 1 ]; then
-    rsync -a --delete --dry-run --stats "$DST_MIRROR/" "$SRC_DATA/" | tail -15
+    # shellcheck disable=SC2086 # $log_exclude is one optional flag
+    rsync -a --delete $log_exclude --dry-run --stats "$DST_MIRROR/" "$SRC_DATA/" | tail -15
 else
-    # shellcheck disable=SC2086 # $progress is one optional flag, empty off a terminal
-    rsync -a --delete $progress "$DST_MIRROR/" "$SRC_DATA/" || {
+    # shellcheck disable=SC2086 # $progress and $log_exclude are one optional flag each
+    rsync -a --delete $log_exclude $progress "$DST_MIRROR/" "$SRC_DATA/" || {
         rc=$?
         [ "$rc" -eq 24 ] || failback_abort "rsync exit code $rc" "$rc"
     }
