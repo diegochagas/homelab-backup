@@ -86,3 +86,13 @@ FAIL_THRESHOLD="3"
 # failback.sh is run by hand.
 AUTO_FAILBACK="no"
 AUTO_FAILBACK_STABLE_CHECKS="3"
+
+# yes: when the data drive is present but
+# mounted at a different path than
+# SRC_DATA (ZimaOS does this after an OS
+# update, e.g. appending _1), the
+# watchdog stops the apps, unmounts it,
+# mounts it read-write at SRC_DATA and
+# starts the apps again. With no it only
+# sends the UNMOUNTED alert.
+AUTO_REMOUNT="no"

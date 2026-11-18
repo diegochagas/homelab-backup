@@ -19,6 +19,9 @@
 # per failover: when it fails, the apps go back onto the backup drive and the
 # rest is manual (the Telegram message says what failed).
 #
+# With AUTO_REMOUNT=yes a data drive that ZimaOS mounted at the wrong path
+# (e.g. after an OS update) is moved back to SRC_DATA and the apps restarted.
+#
 # Containers: see lib/containers.sh for which ones are stopped, started again
 # and reported when they stay down.
 #
@@ -39,6 +42,8 @@ fi
 . "$SCRIPT_DIR/lib/drive.sh"
 # shellcheck source=lib/containers.sh
 . "$SCRIPT_DIR/lib/containers.sh"
+# shellcheck source=lib/remount.sh
+. "$SCRIPT_DIR/lib/remount.sh"
 
 [ "${FAILOVER_ENABLED:-no}" = yes ] || exit 0
 
@@ -51,6 +56,7 @@ for v in DATA_UUID MIRROR_UUID STATE_DIR SRC_DATA DST_MIRROR APPS; do
 done
 FAIL_THRESHOLD="${FAIL_THRESHOLD:-3}"
 AUTO_FAILBACK="${AUTO_FAILBACK:-no}"
+AUTO_REMOUNT="${AUTO_REMOUNT:-no}"
 AUTO_FAILBACK_STABLE_CHECKS="${AUTO_FAILBACK_STABLE_CHECKS:-3}"
 case $AUTO_FAILBACK_STABLE_CHECKS in
     '' | *[!0-9]* | 0)
@@ -143,6 +149,29 @@ mount --bind $DST_MIRROR $SRC_DATA failed; the apps are left stopped."
     start_and_verify_containers
 }
 
+# UNMOUNTED at SRC_DATA but mounted elsewhere: stop the apps (they bind the
+# empty folder), remount at SRC_DATA, start everything that ran before.
+# Returns non-zero when the drive could not be moved (the caller alerts).
+#   remount_data_drive
+remount_data_drive() {
+    dev=$(drive_dev_by_uuid "$DATA_UUID") || return 1
+    [ -n "$(drive_stray_targets "$dev" "$SRC_DATA")" ] || return 1
+    log "data drive mounted at the wrong path - remounting at $SRC_DATA"
+    containers_stop_for_drive "$SRC_DATA"
+    if ! drive_remount_at "$DATA_UUID" "$SRC_DATA"; then
+        log "REMOUNT FAILED - apps left stopped"
+        notify "🚨 REMOUNT FAILED — $(hostname)
+
+Could not move the data drive to $SRC_DATA; the apps are left stopped.
+Check: findmnt -S $dev"
+        return 1
+    fi
+    start_and_verify_containers
+    notify "✅ DATA DRIVE REMOUNTED — $(hostname)
+
+ZimaOS had mounted it at the wrong path; it is back at $SRC_DATA and the apps were restarted."
+}
+
 # Runs failback.sh once per failover and, when it fails, puts the apps back
 # onto the backup drive. The lock this script holds is passed on (fd 9).
 #   auto_failback
@@ -230,6 +259,11 @@ $SRC_DATA is back to normal (was $prev)."
         ;;
     RO | UNMOUNTED)
         state_rm "$COUNT"
+        if [ "$state" = UNMOUNTED ] && [ "$AUTO_REMOUNT" = yes ] && remount_data_drive; then
+            state_write OK "$LAST"
+            containers_snapshot "$SNAPSHOT"
+            exit 0
+        fi
         if [ "$prev" != "$state" ]; then
             log "data drive $state"
             notify "⚠️ DATA DRIVE $state — $(hostname)

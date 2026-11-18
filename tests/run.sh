@@ -89,6 +89,7 @@ FAILOVER_ENABLED="${CFG_FAILOVER:-yes}"
 FAIL_THRESHOLD="${CFG_THRESHOLD:-2}"
 AUTO_FAILBACK="${CFG_AUTO_FAILBACK:-no}"
 AUTO_FAILBACK_STABLE_CHECKS="${CFG_STABLE_CHECKS:-2}"
+AUTO_REMOUNT="${CFG_AUTO_REMOUNT:-no}"
 EOF
 }
 
@@ -250,6 +251,44 @@ test_failover_ro_or_unmounted_only_alerts() {
     assert_no_file "$STATE_DIR/failover.count"
     assert_no_file "$STATE_DIR/failover.active"
     assert_eq "" "$(cat "$FAKE_CALLS")" "no docker/mount calls"
+}
+
+# ZimaOS update scenario: the drive is mounted at DATA_1 and DATA is an empty folder.
+stray_mount() {
+    unmount_fake "$DATA"
+    mkdir -p "${DATA}_1"
+    mount_fake "${DATA}_1" "$DEVFS/sdc" rw,noatime
+}
+
+test_failover_remounts_a_drive_mounted_at_the_wrong_path() {
+    CFG_AUTO_REMOUNT=yes write_config
+    check # healthy: snapshot of running containers
+    stray_mount
+    printf '' >"$FAKE_DOCKER_RUNNING" # the apps exited on the empty folder
+    check
+    assert_eq "$DEVFS/sdc" "$(mount_source "$DATA")" "remounted at the expected path"
+    assert_not_mounted "${DATA}_1"
+    assert_no_file "${DATA}_1"
+    assert_calls "^docker start app1$"
+    assert_eq OK "$(cat "$STATE_DIR/failover.last-state")" "state"
+    assert_no_file "$STATE_DIR/failover.active"
+    assert_no_file "$STATE_DIR/failover.count"
+}
+
+test_failover_remount_is_off_by_default() {
+    stray_mount
+    check
+    assert_not_mounted "$DATA"
+    assert_eq UNMOUNTED "$(cat "$STATE_DIR/failover.last-state")" "state"
+    assert_no_calls "^mount "
+}
+
+test_failover_remount_leaves_a_plain_unmounted_drive_to_the_alert() {
+    CFG_AUTO_REMOUNT=yes write_config
+    unmount_fake "$DATA"
+    check
+    assert_eq UNMOUNTED "$(cat "$STATE_DIR/failover.last-state")" "state"
+    assert_no_calls "^(mount|umount) "
 }
 
 test_failover_switches_after_threshold_and_stays() {

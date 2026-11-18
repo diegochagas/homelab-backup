@@ -119,6 +119,7 @@ homelab-backup/
 ├── zimaos/
 │   ├── backup.sh               # Stage 1: runs on the ZimaOS server itself
 │   ├── failover-check.sh       # Data-drive watchdog: fails over to the backup drive
+│   ├── lib/remount.sh          # Move the data drive back to SRC_DATA (AUTO_REMOUNT)
 │   ├── failback.sh             # Switch back after a failover (by hand or AUTO_FAILBACK)
 │   ├── lib/containers.sh       # Which containers stop/start around a drive switch, and which stayed down
 │   ├── lib/drive.sh            # Attach/detach/health helpers shared by the three
@@ -354,6 +355,11 @@ own paths — and sends one Telegram message when a drive with `DATA_UUID` shows
 up again. Plug a replacement in only when you are ready to fail back: the
 watchdog restarts the apps to keep them on the backup drive whenever something
 else lands on `SRC_DATA`.
+
+A data drive that is present but mounted at another path (ZimaOS appended `_1`
+after an update) is not a failover. With `AUTO_REMOUNT="yes"` the watchdog stops
+the apps, mounts the drive at `SRC_DATA`, removes the stray folder and starts
+the apps that ran before; with `no` it only sends the UNMOUNTED alert.
 
 Switching back is automatic with `AUTO_FAILBACK="yes"`: once the data drive
 has been connected for `AUTO_FAILBACK_STABLE_CHECKS` checks in a row (default

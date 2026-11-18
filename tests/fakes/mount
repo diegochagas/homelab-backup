@@ -5,6 +5,13 @@ case $1 in
         src=$(awk -v t="$2" '$1 == t { s = $2 } END { print s }' "$FAKE_MOUNTS")
         echo "$3 $src rw,bind" >> "$FAKE_MOUNTS" ;;
     -o)
+        case $2 in
+            remount*) ;;
+            *)
+                # mount -o OPTS DEV TARGET
+                echo "$4 $3 $2" >> "$FAKE_MOUNTS"
+                exit 0 ;;
+        esac
         # mount -o remount,rw TARGET
         awk -v t="$3" -v o="$2" '$1 == t { $3 = (o ~ /rw/) ? "rw,relatime" : "ro,relatime" } { print }' "$FAKE_MOUNTS" > "$FAKE_MOUNTS.tmp"
         mv "$FAKE_MOUNTS.tmp" "$FAKE_MOUNTS" ;;
