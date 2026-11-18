@@ -50,6 +50,7 @@ Language: bash on the workstation, POSIX `sh` under `zimaos/`. Formatter: `shfmt
 - Logging: plain text lines prefixed with the stage name (these are CLIs read by a human and Telegram).
 - Defensive code this repo needs (flag anything else instead of adding it silently): lock file against
   concurrent runs (flock, as in `zimaos/backup.sh`); free-space check before copying; never delete the last
-  verified-good copy; never write into the source; restart apps even when rsync fails; Telegram notify on failure.
+  verified-good copy; never write into the source; restart apps even when rsync fails; Telegram notify on failure; remount the data drive at its
+  expected path when ZimaOS mounted it elsewhere (`zimaos/lib/remount.sh`, opt-in `AUTO_REMOUNT`).
 - README keeps "The Backup Chain" diagram current; update it when the shape changes.
 - `scripts/check` is the single validation command.
